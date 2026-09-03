@@ -10,6 +10,7 @@ import { layoutFlow, markerOf, measureRows } from "../layout/grid";
 import { selectionRange, threadOf } from "../layout/navigate";
 import { FOCUS_REACH, type Argument, type Placed, type Speech } from "../model/types";
 import type { Peer } from "../sync/presence";
+import type { AgentDraft } from "../agent/types";
 
 /**
  * The gap between one argument and the next, in the sheet's authored pixels.
@@ -107,6 +108,8 @@ interface FlowSheetProps {
    * would make you look away from the flow to read it.
    */
   peers?: Peer[];
+  /** A generated response that has not entered the CRDT yet. */
+  draft?: AgentDraft | null;
 }
 
 export function FlowSheet({
@@ -120,12 +123,18 @@ export function FlowSheet({
   focus = null,
   zoom = 1,
   peers = [],
+  draft = null,
 }: FlowSheetProps): React.ReactElement {
-  const ownPlaced = useMemo(
-    () => (placedProp ? [] : layoutFlow(roots)),
-    [roots, placedProp],
+  const draftId = draft ? `agent-draft:${draft.requestId}` : null;
+  const visualRoots = useMemo(
+    () => (draft && draftId ? withDraft(roots, draft, draftId) : roots),
+    [roots, draft, draftId],
   );
-  const placed = placedProp ?? ownPlaced;
+  const ownPlaced = useMemo(
+    () => (placedProp && !draft ? [] : layoutFlow(visualRoots)),
+    [visualRoots, placedProp, draft],
+  );
+  const placed = placedProp && !draft ? placedProp : ownPlaced;
 
   // The selected arguments, if any — everything between the anchor and the
   // cursor, top to bottom (`selectionRange` walks the column in that order
@@ -141,7 +150,7 @@ export function FlowSheet({
   // What the cursor's argument answers, and what answers it — drawn as a
   // tinted rule on each, so the exchange the cursor is in can be read off the
   // sheet without moving it. See `threadOf`.
-  const thread = useMemo(() => threadOf(roots, cursorId ?? null), [roots, cursorId]);
+  const thread = useMemo(() => threadOf(visualRoots, cursorId ?? null), [visualRoots, cursorId]);
 
   // Which speech the cursor is in, so its header can say so. The headers are
   // sticky and therefore the one part of a column that is always on screen —
@@ -163,9 +172,9 @@ export function FlowSheet({
       m.set(n.id, n);
       n.children.forEach(walk);
     };
-    roots.forEach(walk);
+    visualRoots.forEach(walk);
     return m;
-  }, [roots]);
+  }, [visualRoots]);
 
   // Where everyone else is, keyed by the argument they're on — grouped,
   // because two peers can be on one argument and the cell has to be told
@@ -463,7 +472,12 @@ export function FlowSheet({
                   takes the room its characters need and no more — so an
                   unmarked argument simply starts with its first word. */}
               {marker && <span className="flow-num">{marker}</span>}
-              {renderArgument ? renderArgument(arg) : <DefaultArgument text={arg.text} />}
+              {p.id === draftId ? (
+                <div className="flow-argument flow-argument--agent" aria-live="polite">
+                  {arg.text || (draft?.status === "error" ? draft.error : "thinking…")}
+                  {draft?.status === "ready" && <span className="flow-agent-hint">Tab</span>}
+                </div>
+              ) : renderArgument ? renderArgument(arg) : <DefaultArgument text={arg.text} />}
             </div>
           );
         })}
@@ -496,6 +510,22 @@ export function FlowSheet({
       )}
     </div>
   );
+}
+
+function withDraft(roots: Argument[], draft: AgentDraft, id: string): Argument[] {
+  const shadow: Argument = {
+    id,
+    speech: draft.speech,
+    text: draft.text,
+    mark: "none",
+    support: "analytic",
+    children: [],
+  };
+  const walk = (argument: Argument): Argument =>
+    argument.id === draft.sourceId
+      ? { ...argument, children: [...argument.children, shadow] }
+      : { ...argument, children: argument.children.map(walk) };
+  return roots.map(walk);
 }
 
 function DefaultArgument({ text }: { text: string }): React.ReactElement {

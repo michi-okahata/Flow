@@ -38,6 +38,7 @@ import { useKeymap } from "./ui/useKeymap";
 import { useConfig } from "./ui/useConfig";
 import { useTextBuffer } from "./ui/useTextBuffer";
 import { DEFAULT_MARK, DEFAULT_SUPPORT, type Argument } from "./model/types";
+import { useAgent } from "./agent/useAgent";
 
 /**
  * The composition root: it owns the round and the editor state, derives what
@@ -81,6 +82,14 @@ function App() {
   // the argument editor, and the sheet of keys on `:?`, which has to show the
   // ones this user actually has.
   const config = useConfig();
+
+  const agent = useAgent({
+    config: config.agent,
+    flow: roundFlow,
+    roots: roundRoots,
+    sheet: roundSheets.find((sheet) => sheet.id === roundSheet)?.title ?? "",
+    speeches: SPEECHES.length,
+  });
 
   // What the user carries between rounds: the answers they've memorized to
   // arguments, kept in ~/.flow. Nothing to do with the round's own folder
@@ -345,6 +354,7 @@ function App() {
     setEditor,
     flushText,
     config.keys,
+    editor.memory ? undefined : agent,
   );
 
   // What the command line says, read at submit time rather than from this
@@ -509,6 +519,7 @@ function App() {
           // argument that isn't drawn here, and the sidebar is where they show.
           peers={peers.filter((peer) => peer.sheet === activeSheet)}
           renderArgument={renderArgument}
+          draft={editor.memory ? null : agent.draft}
         />
       </div>
 
@@ -533,7 +544,7 @@ function App() {
         answers={recalled.block?.answers.length ?? 0}
         among={recalled.among}
         memory={editor.memory}
-        memoryError={memory.error}
+        memoryError={agent.error ?? memory.error}
         memoryNote={memory.note}
         // What is wrong with ~/.flow/config.json, if anything. Nowhere else
         // would say: a key that silently does nothing is indistinguishable

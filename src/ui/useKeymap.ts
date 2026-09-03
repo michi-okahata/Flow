@@ -1,6 +1,14 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { keyOf, repeatsWhileHeld, run, runsWhileEditing } from "../editor/commands";
 import type { CommandContext, EditorState } from "../editor/state";
+import type { AgentDraft } from "../agent/types";
+
+interface AgentKeys {
+  draft: AgentDraft | null;
+  generate: (argumentId: string) => void;
+  accept: () => string | null;
+  dismiss: () => void;
+}
 
 /**
  * How a held motion key repeats: the wait before it starts, and the gap
@@ -46,6 +54,7 @@ export function useKeymap(
   flushText: () => void,
   /** Which key does what, the user's config read over the defaults. */
   keys: Record<string, string>,
+  agent?: AgentKeys,
 ): void {
   const { state, flow, round, placed, speeches, sheets, memory } = ctx;
 
@@ -53,8 +62,8 @@ export function useKeymap(
   // captured when the key went down: a hold that crosses into a wider column
   // should be moving through the layout as it is now. The cursor is the one
   // thing not read from here — see `step`.
-  const latest = useRef({ round, placed, speeches, sheets, memory, flow, keys });
-  latest.current = { round, placed, speeches, sheets, memory, flow, keys };
+  const latest = useRef({ round, placed, speeches, sheets, memory, flow, keys, agent });
+  latest.current = { round, placed, speeches, sheets, memory, flow, keys, agent };
 
   // The key being held and its two timers. A ref because a key being down is
   // not something to render — the state each step produces already is.
@@ -86,9 +95,24 @@ export function useKeymap(
 
   useEffect(() => {
     if (!flow) return;
+
     const onKey = (e: KeyboardEvent) => {
       const key = keyOf(e);
       const tag = (e.target as HTMLElement).tagName;
+
+      // A shadow answer owns only its two explicit decisions. Other keys keep
+      // navigating the sheet without silently accepting or throwing it away.
+      if (agent?.draft && key === "Tab") {
+        const id = agent.accept();
+        e.preventDefault();
+        if (id) setEditor((s) => ({ ...s, cursorId: id, editingId: null, column: null }));
+        return;
+      }
+      if (agent?.draft && key === "Escape") {
+        agent.dismiss();
+        e.preventDefault();
+        return;
+      }
       // The textarea owns the keyboard while an argument is open, and the
       // command line owns it while that is — except for the chords that are
       // meant to work mid-sentence, and then only from inside an argument.
@@ -109,6 +133,15 @@ export function useKeymap(
       // fingers on `j` and `l` must not leave a timer running behind the
       // second.
       stop();
+
+      if (keys[key] === "generate") {
+        if (state.cursorId) {
+          agent?.generate(state.cursorId);
+          setEditor((s) => ({ ...s, editingId: null, count: null }));
+        }
+        e.preventDefault();
+        return;
+      }
 
       // Run the command here, not inside the setState updater: commands mutate
       // the flow, and StrictMode double-invokes updaters in development.
@@ -144,5 +177,5 @@ export function useKeymap(
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", stop);
     };
-  }, [state, flow, round, placed, speeches, sheets, memory, setEditor, flushText, keys]);
+  }, [state, flow, round, placed, speeches, sheets, memory, setEditor, flushText, keys, agent]);
 }

@@ -49,6 +49,10 @@ const FILE: &str = "db";
 /// opened in a text editor, and a row in a SQLite file cannot be.
 const CONFIG: &str = "config.json";
 
+/// An append-only record of every agent run. JSONL keeps a partial final write
+/// from making the earlier transcripts unreadable and is easy to archive.
+const TRANSCRIPTS: &str = "transcripts.jsonl";
+
 /// The schema. One step, because nothing has shipped yet and so there is no
 /// file anywhere that was written by an older build of this — the current
 /// schema and the whole history of it are the same thing.
@@ -144,6 +148,10 @@ fn store_in(home: &Path) -> Result<PathBuf, String> {
 /// machine that has never run this ends up with the directory either way.
 fn config_in(home: &Path) -> Result<PathBuf, String> {
     Ok(store_in(home)?.with_file_name(CONFIG))
+}
+
+fn transcripts_in(home: &Path) -> Result<PathBuf, String> {
+    Ok(store_in(home)?.with_file_name(TRANSCRIPTS))
 }
 
 /// Its contents, or `None` where there is no file — which is every machine
@@ -287,6 +295,33 @@ pub fn store_seed_config(app: tauri::AppHandle, text: String) -> Result<bool, St
         .home_dir()
         .map_err(|e| format!("no home directory: {e}"))?;
     write_config(&config_in(&home)?, &text)
+}
+
+/// Append one complete run to `~/.flow/transcripts.jsonl`. The frontend sends
+/// structured JSON so provider-specific request details survive untouched.
+#[tauri::command]
+pub fn store_transcript(
+    app: tauri::AppHandle,
+    transcript: serde_json::Value,
+) -> Result<(), String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("no home directory: {e}"))?;
+    append_transcript(&transcripts_in(&home)?, &transcript)
+}
+
+fn append_transcript(path: &Path, transcript: &serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    serde_json::to_writer(&mut file, transcript)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    file.write_all(b"\n")
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// The write itself, so the test can reach it without an `AppHandle`.
@@ -539,8 +574,9 @@ pub fn store_forget_imports(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        blocks, config_in, forget_imports, import, import_file, memorize, open, read_config,
-        rename_position, steps_of, store_in, write_config, Imported, ImportedFile, MIGRATIONS,
+        append_transcript, blocks, config_in, forget_imports, import, import_file, memorize, open,
+        read_config, rename_position, steps_of, store_in, write_config, Imported, ImportedFile,
+        MIGRATIONS,
     };
 
     /// A store of our own, named after the test using it.
@@ -965,6 +1001,24 @@ mod tests {
             read_config(&config).unwrap().as_deref(),
             Some(r#"{"keys":{"g":"answer"}}"#)
         );
+    }
+
+    #[test]
+    fn transcripts_are_appended_as_independent_json_lines() {
+        let home = home("transcripts");
+        let path = home.join("transcripts.jsonl");
+        append_transcript(&path, &serde_json::json!({ "id": "first", "response": "a" }))
+            .unwrap();
+        append_transcript(&path, &serde_json::json!({ "id": "second", "response": "b" }))
+            .unwrap();
+
+        let lines: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["id"], "first");
+        assert_eq!(lines[1]["id"], "second");
     }
 
     #[test]

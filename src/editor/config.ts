@@ -1,4 +1,5 @@
 import { commands, DEFAULT_KEYS } from "./commands";
+import type { AgentConfig } from "../agent/types";
 
 /**
  * `~/.flow/config.json`, as the keymap sees it.
@@ -41,9 +42,11 @@ export interface Config {
    * config with one bad line is a config with every other line still good.
    */
   problems: string[];
+  /** The optional answer-generating backend. */
+  agent: AgentConfig | null;
 }
 
-export const DEFAULT_CONFIG: Config = { keys: DEFAULT_KEYS, problems: [] };
+export const DEFAULT_CONFIG: Config = { keys: DEFAULT_KEYS, problems: [], agent: null };
 
 /**
  * Read a config, or the defaults where there is no file.
@@ -60,40 +63,64 @@ export function readConfig(text: string | null): Config {
   } catch (e) {
     // The parser's own message names the line and column, which is the whole
     // of what is useful about a syntax error in a file you are editing.
-    return { keys: DEFAULT_KEYS, problems: [`config.json: ${(e as Error).message}`] };
+    return { keys: DEFAULT_KEYS, problems: [`config.json: ${(e as Error).message}`], agent: null };
   }
 
   if (!isObject(parsed)) {
-    return { keys: DEFAULT_KEYS, problems: ["config.json: expected an object"] };
-  }
-
-  const bindings = parsed.keys;
-  if (bindings === undefined) return DEFAULT_CONFIG;
-  if (!isObject(bindings)) {
-    return { keys: DEFAULT_KEYS, problems: [`config.json: "keys" is not an object`] };
+    return { keys: DEFAULT_KEYS, problems: ["config.json: expected an object"], agent: null };
   }
 
   const keys = { ...DEFAULT_KEYS };
   const problems: string[] = [];
-  for (const [key, name] of Object.entries(bindings)) {
-    if (!KEY_PATTERN.test(key)) {
-      problems.push(`config.json: "${key}" is not a key`);
-      continue;
+  const bindings = parsed.keys;
+  if (bindings !== undefined) {
+    if (!isObject(bindings)) {
+      problems.push(`config.json: "keys" is not an object`);
+    } else {
+      for (const [key, name] of Object.entries(bindings)) {
+        if (!KEY_PATTERN.test(key)) {
+          problems.push(`config.json: "${key}" is not a key`);
+          continue;
+        }
+        // Unbinding, which is what a key with nothing on it is for: `"x": null`
+        // leaves `x` doing nothing rather than deleting an argument.
+        if (name === null || name === "") {
+          delete keys[key];
+          continue;
+        }
+        if (typeof name !== "string" || !(name in commands)) {
+          problems.push(`config.json: "${key}" is bound to no such command: ${String(name)}`);
+          continue;
+        }
+        keys[key] = name;
+      }
     }
-    // Unbinding, which is what a key with nothing on it is for: `"x": null`
-    // leaves `x` doing nothing rather than deleting an argument.
-    if (name === null || name === "") {
-      delete keys[key];
-      continue;
-    }
-    if (typeof name !== "string" || !(name in commands)) {
-      problems.push(`config.json: "${key}" is bound to no such command: ${String(name)}`);
-      continue;
-    }
-    keys[key] = name;
   }
 
-  return { keys, problems };
+  return { keys, problems, agent: readAgent(parsed.agent, problems) };
+}
+
+function readAgent(value: unknown, problems: string[]): AgentConfig | null {
+  if (value === undefined || value === null) return null;
+  if (!isObject(value)) {
+    problems.push(`config.json: "agent" is not an object`);
+    return null;
+  }
+  const provider = value.provider ?? "openai-compatible";
+  if (typeof provider !== "string" || typeof value.endpoint !== "string" || typeof value.model !== "string") {
+    problems.push(`config.json: "agent" needs endpoint and model strings`);
+    return null;
+  }
+  if (value.apiKey !== undefined && typeof value.apiKey !== "string") {
+    problems.push(`config.json: "agent.apiKey" is not a string`);
+    return null;
+  }
+  return {
+    provider,
+    endpoint: value.endpoint,
+    model: value.model,
+    ...(typeof value.apiKey === "string" ? { apiKey: value.apiKey } : {}),
+  };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -115,7 +142,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * of an old keymap nobody remembers agreeing to.
  */
 export function defaultConfigText(): string {
-  return `${JSON.stringify({ keys: DEFAULT_KEYS }, null, 2)}\n`;
+  return `${JSON.stringify({
+    keys: DEFAULT_KEYS,
+    agent: {
+      provider: "openai-compatible",
+      endpoint: "http://localhost:11434/v1/chat/completions",
+      model: "qwen3:8b",
+    },
+  }, null, 2)}\n`;
 }
 
 /**

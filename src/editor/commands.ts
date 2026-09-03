@@ -1021,6 +1021,9 @@ export const commands: Record<string, Command> = {
   sidebar: toggleSidebar, // show or hide the list of sheets
   mark: cycleMark, // how the selection is marked off: 1. / a. / nothing
   support: toggleSupport, // was it a card, or did they just say it
+  // Async generation is performed by useAgent/useKeymap. This registry entry
+  // gives it the same configurable naming layer as every other key.
+  generate: ({ state }) => state,
   shiftDown: moveSelection("down"), // shift the selection past its next sibling…
   shiftUp: moveSelection("up"), // …or its previous one
   zoomIn: zoomBy(ZOOM_STEP),
@@ -1084,6 +1087,7 @@ export const DEFAULT_KEYS: Record<string, string> = {
   "M-b": "sidebar", // the chord every editor uses for a side panel
   "#": "mark",
   c: "support",
+  g: "generate",
   J: "shiftDown",
   K: "shiftUp",
   // Zoom, on the platform chord — this is a desktop app, and Cmd +/- is where
@@ -1129,7 +1133,7 @@ export const DEFAULT_KEYS: Record<string, string> = {
  * reaching it (ArgumentEditor) — so they ask here rather than each keeping
  * their own list.
  */
-const WHILE_EDITING = new Set(["recall"]);
+const WHILE_EDITING = new Set(["recall", "generate"]);
 
 export function runsWhileEditing(key: string, keys: Record<string, string>): boolean {
   return WHILE_EDITING.has(keys[key]);
