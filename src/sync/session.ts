@@ -183,9 +183,9 @@ export class FlowSession {
    * distinction is the whole reason `share` and `join` are two commands. Both
    * are defensible mergers of two CRDTs, but they mean opposite things to a
    * person: `share` means "here is my flow", `join` means "show me yours".
-   * Merging on join is what would put your sample flow — or last round's — into
-   * your partner's sheet, sideways, with no way to tell which arguments were
-   * real.
+   * Merging on join is what would put the sheet you had open — or last
+   * round's — into your partner's, sideways, with no way to tell which
+   * arguments were real.
    */
   join(invitation: string): void {
     const parsed = parseInvitation(invitation);

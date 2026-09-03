@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Round } from "../model/round";
 import {
   canUseFiles,
+  folderName,
+  onWindowClosing,
   pickDirectory,
   readDirectory,
   removeFile,
+  setWindowTitle,
   writeFile,
 } from "../files/disk";
 import {
@@ -187,6 +190,22 @@ export function useLibrary(round: Round, load: (round: Round) => void): Library 
       if (timer.current !== null) void flush();
     };
   }, [round, directory, flush]);
+
+  // The window is the round. Named after the folder it is kept in, or
+  // "untitled" until there is one — the same word a new sheet gets, because it
+  // means the same thing here: real, and not written down anywhere yet.
+  useEffect(() => {
+    void setWindowTitle(directory ? folderName(directory) : "untitled");
+  }, [directory]);
+
+  // Finish the queued write when the window is put away. ⌘W hides the window
+  // rather than closing it, so nothing is at stake in the moment — but a
+  // hidden window is one the system may stop running timers for, and the
+  // debounce above is a timer. Landing it here is what keeps the round on disk
+  // as current as the round on screen while nobody is looking at either.
+  //
+  // `flush` is stable, so this subscribes once and stays subscribed.
+  useEffect(() => onWindowClosing(() => void flush()), [flush]);
 
   /**
    * Bind a directory, forgetting whatever the last one held. `held` and `saved`

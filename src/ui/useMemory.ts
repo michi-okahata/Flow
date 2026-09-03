@@ -3,14 +3,15 @@ import {
   canRemember,
   forgetImports,
   importInto,
+  importOne,
   memorize,
   readImported,
   readMemorized,
   type Block,
 } from "../memory/store";
 import { argumentKey, indexOf, recall as recallIn, type Recall } from "../memory/recall";
-import { countOf, filesIn, scan } from "../memory/cmir";
-import { pickDirectory } from "../files/disk";
+import { blocksOf, countOf, filesIn, scan, scanFile } from "../memory/cmir";
+import { folderName, pickDirectory, pickFile } from "../files/disk";
 
 /**
  * The blocks the user has to hand, held in memory for the length of a session
@@ -47,6 +48,13 @@ export interface Memory {
    * Replaces whatever was read out of that folder last time.
    */
   importFrom: () => void;
+  /**
+   * Read one CardMirror file in as blocks. Asks which. Replaces whatever was
+   * read out of that file last time, and nothing else — so one file out of an
+   * imported folder can be refreshed on its own, and a file picked by mistake
+   * costs `:forget`-ing it alone rather than the folder it came with.
+   */
+  importFile: () => void;
   /** Drop every imported block. What you memorized stays. */
   forget: () => void;
   /**
@@ -168,6 +176,34 @@ export function useMemory(): Memory {
     }
   }, []);
 
+  /**
+   * The single-file shape of `importFrom`, and not optimistic for the same
+   * reason: a dialog in front of it, the disk on the far side of it. The whole
+   * file is written even when its blocks come out empty — a file that now
+   * reads as nothing has said so, and what it said the last time must go.
+   */
+  const importFile = useCallback(async () => {
+    if (!canRemember()) {
+      setError("importing needs the desktop app");
+      return;
+    }
+    try {
+      const picked = await pickFile();
+      if (!picked) return;
+      // The file as the filesystem spells it, which is what `cmir_read_file`
+      // canonicalises and what its blocks are filed under — so reading the
+      // same file twice is one file, and reading its folder later sweeps it up.
+      const file = await scanFile(picked);
+      const blocks = blocksOf(file);
+      await importOne({ source: file.path, blocks });
+      setImported(await readImported());
+      setError(null);
+      setNote(readOne(file.path, blocks.length));
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }, []);
+
   const forget = useCallback(async () => {
     if (!canRemember()) {
       setError("importing needs the desktop app");
@@ -204,13 +240,14 @@ export function useMemory(): Memory {
       recall,
       keep,
       importFrom: () => void importFrom(),
+      importFile: () => void importFile(),
       forget: () => void forget(),
       refresh,
       report,
       error,
       note,
     }),
-    [memorized, recall, keep, importFrom, forget, refresh, report, error, note],
+    [memorized, recall, keep, importFrom, importFile, forget, refresh, report, error, note],
   );
 }
 
@@ -233,4 +270,16 @@ function read(
   if (scanned.failed > 0) also.push(scanned.failed + " unreadable");
   if (scanned.truncated) also.push("folder too large to read whole");
   return also.length > 0 ? said + " (" + also.join(", ") + ")" : said;
+}
+
+/**
+ * The same for one picked file. By its name rather than its path — a single
+ * file is the one thing the user just had in their hand, and the full path is
+ * what a tooltip is for.
+ */
+function readOne(path: string, blocks: number): string {
+  const name = folderName(path);
+  return blocks === 0
+    ? "no blocks in " + name
+    : blocks + (blocks === 1 ? " block from " : " blocks from ") + name;
 }

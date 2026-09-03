@@ -53,6 +53,16 @@ export async function scan(dir: string): Promise<Scan> {
 }
 
 /**
+ * Read one `.cmir`, picked by itself. Nothing is written by this either, and
+ * unlike a folder — where one bad file in six hundred is a count on the status
+ * line — a file that will not read is the whole answer, and comes back as the
+ * error.
+ */
+export async function scanFile(path: string): Promise<CmirFile> {
+  return invoke<CmirFile>("cmir_read_file", { path });
+}
+
+/**
  * The file's own name, for a block that came in without a hat above it.
  *
  * A position is where you would look for the block, and a file with no hats in

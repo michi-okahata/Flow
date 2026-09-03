@@ -268,6 +268,41 @@ pub fn sections(bytes: &[u8]) -> Result<Vec<Section>, String> {
     Ok(sections_in(content))
 }
 
+/// Read one file's blocks, for a pick of a single `.cmir` rather than a whole
+/// folder.
+///
+/// Unlike the folder walk, which counts the files it could not read and carries
+/// on, one file picked is one file asked about: any failure here is the whole
+/// answer, and goes back as the error rather than as a number on the status
+/// line. The path comes back canonical — the same rule as `cmir_read_dir`, so
+/// the blocks are filed under the one spelling and reading the file again
+/// replaces them instead of doubling them.
+pub fn read_file(path: &Path) -> Result<CmirFile, String> {
+    let file = fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !file.is_file() {
+        return Err(format!("{}: not a file", file.display()));
+    }
+    if !is_cmir(&file) {
+        return Err(format!("{}: not a CardMirror file", file.display()));
+    }
+    // Size before contents: the point of the cap is not to have read it.
+    let too_big = fs::metadata(&file).map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(true);
+    if too_big {
+        return Err(format!("{}: larger than this will read", file.display()));
+    }
+    let bytes = fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(CmirFile {
+        path: file.to_string_lossy().into_owned(),
+        sections: sections(&bytes)?,
+    })
+}
+
+/// Read one `.cmir` the user picked.
+#[tauri::command]
+pub fn cmir_read_file(path: String) -> Result<CmirFile, String> {
+    read_file(Path::new(&path))
+}
+
 /// Every `.cmir` under `dir`, sorted, so importing the same folder twice reads
 /// it in the same order twice.
 ///
@@ -364,7 +399,7 @@ pub fn cmir_read_dir(dir: String) -> Result<Scan, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cmir_read_dir, is_gzip, sections};
+    use super::{cmir_read_dir, cmir_read_file, is_gzip, read_file, sections};
     use serde_json::json;
 
     /// A `.cmir`'s bytes, uncompressed — which the reader takes as readily as a
@@ -641,6 +676,79 @@ mod tests {
         let missing = std::env::temp_dir().join("flow-cmir-nowhere");
         let _ = std::fs::remove_dir_all(&missing);
         assert!(cmir_read_dir(missing.to_string_lossy().into_owned()).is_err());
+    }
+
+    /// One picked file reads the same as it would inside a folder, and comes
+    /// back under its canonical path — what the store files its blocks under,
+    /// so a second read of the same file is one file and not two.
+    #[test]
+    fn reads_one_picked_file() {
+        use std::fs;
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join("flow-cmir-single");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let plain = file(vec![
+            heading("hat", "Politics DA"),
+            heading("block", "AT: No Link"),
+            card("Link is overwhelming", "…"),
+        ]);
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&plain).unwrap();
+        let path = dir.join("politics.cmir");
+        std::fs::write(&path, encoder.finish().unwrap()).unwrap();
+
+        let read = read_file(&path).unwrap();
+        assert_eq!(read.sections.len(), 1);
+        assert_eq!(read.sections[0].position, "Politics DA");
+        // Canonical, however the path was spelled on the way in. The temp
+        // directory itself is resolved for the comparison, because on macOS
+        // `/var` is a symlink to `/private/var` and only one spelling of it
+        // comes back from `canonicalize`.
+        let tmp = fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(read.path.starts_with(&tmp));
+        assert!(read.path.ends_with("politics.cmir"));
+    }
+
+    /// A pick is a question about one file, so every way it can fail is the
+    /// whole answer rather than a count.
+    #[test]
+    fn a_picked_file_fails_loudly_and_alone() {
+        let dir = std::env::temp_dir().join("flow-cmir-single-bad");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Not there.
+        assert!(read_file(&dir.join("gone.cmir")).is_err());
+        // There, but never a CardMirror file — including by extension, which
+        // the folder walk also insists on.
+        std::fs::write(dir.join("notes.txt"), "mine").unwrap();
+        assert!(read_file(&dir.join("notes.txt")).is_err());
+        std::fs::write(dir.join("damaged.cmir"), "not a cardmirror file").unwrap();
+        assert!(read_file(&dir.join("damaged.cmir")).is_err());
+        // A folder picked where a file was wanted.
+        assert!(read_file(&dir).is_err());
+    }
+
+    #[test]
+    fn the_command_takes_a_path_as_text() {
+        let dir = std::env::temp_dir().join("flow-cmir-single-cmd");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("da.cmir"),
+            file(vec![heading("block", "Uniqueness"), card("It is unique", "…")]),
+        )
+        .unwrap();
+
+        let read = cmir_read_file(dir.join("da.cmir").to_string_lossy().into_owned()).unwrap();
+        assert_eq!(read.sections[0].argument, "Uniqueness");
     }
 
     #[test]

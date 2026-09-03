@@ -113,6 +113,16 @@ export async function importInto(dir: string, files: ImportedFile[]): Promise<vo
   await invoke("store_import", { dir, files });
 }
 
+/**
+ * Replace one file's blocks with `file`'s — the single-file shape of
+ * `importInto`, matched by exact source rather than by folder prefix. An empty
+ * `blocks` is a file that now reads as nothing, and forgets what it used to
+ * say. See `import_file` in store.rs.
+ */
+export async function importOne(file: ImportedFile): Promise<void> {
+  await invoke("store_import_file", { file });
+}
+
 /** Drop every block that came out of a file. What you memorized stays. */
 export async function forgetImports(): Promise<void> {
   await invoke("store_forget_imports");

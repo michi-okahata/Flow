@@ -471,6 +471,65 @@ pub fn store_import(
     import(&mut open(&path)?, &dir, &files).map_err(at(&path))
 }
 
+/// Replace one file's blocks with `file`'s — the single-file shape of `import`.
+///
+/// By exact source rather than by prefix: a file is not a folder, and the
+/// prefix rule would look for sources under `path/` while the file's own rows
+/// sit on `path` itself. The composition with folder imports still works, and
+/// in both directions — a folder read over a singly-imported file sweeps it up
+/// under the folder's prefix, and reading one file out of an imported folder
+/// replaces only that file's rows and leaves its neighbours' alone.
+///
+/// An empty `blocks` is meaningful here, as it is for a folder: a file that
+/// now reads as nothing (emptied, or every block left headingless) forgets
+/// what it used to say rather than leaving it behind.
+fn import_file(db: &mut Connection, file: &ImportedFile) -> rusqlite::Result<()> {
+    let tx = db.transaction()?;
+    tx.execute("DELETE FROM answer WHERE source = ?1", [&file.source])?;
+    tx.execute("DELETE FROM block WHERE source = ?1", [&file.source])?;
+
+    let mut add_block = tx.prepare(
+        "INSERT INTO block (source, position, key, argument, memorized_at)
+         VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))",
+    )?;
+    let mut add_answer = tx.prepare(
+        "INSERT INTO answer (source, position, key, ordinal, text)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    for block in &file.blocks {
+        if block.key.is_empty() || block.answers.is_empty() {
+            continue;
+        }
+        add_block.execute(rusqlite::params![
+            file.source,
+            block.position,
+            block.key,
+            block.argument,
+        ])?;
+        for (ordinal, answer) in block.answers.iter().enumerate() {
+            add_answer.execute(rusqlite::params![
+                file.source,
+                block.position,
+                block.key,
+                ordinal as i64,
+                answer,
+            ])?;
+        }
+    }
+    drop(add_answer);
+    drop(add_block);
+    tx.commit()
+}
+
+#[tauri::command]
+pub fn store_import_file(app: tauri::AppHandle, file: ImportedFile) -> Result<(), String> {
+    if file.source.trim().is_empty() {
+        return Err("no file to import from".into());
+    }
+    let path = path(&app)?;
+    import_file(&mut open(&path)?, &file).map_err(at(&path))
+}
+
 #[tauri::command]
 pub fn store_forget_imports(app: tauri::AppHandle) -> Result<(), String> {
     let path = path(&app)?;
@@ -480,8 +539,8 @@ pub fn store_forget_imports(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        blocks, config_in, forget_imports, import, memorize, open, read_config, rename_position,
-        steps_of, store_in, write_config, Imported, ImportedFile, MIGRATIONS,
+        blocks, config_in, forget_imports, import, import_file, memorize, open, read_config,
+        rename_position, steps_of, store_in, write_config, Imported, ImportedFile, MIGRATIONS,
     };
 
     /// A store of our own, named after the test using it.
@@ -725,6 +784,100 @@ mod tests {
 
         assert_eq!(all(&db).len(), 2);
         assert_eq!(from(&db, "/backfiles/da/politics.cmir", "Politics", "no link"), ["a"]);
+    }
+
+    /// Reading one file in, and reading it again — which must replace it
+    /// rather than double it, the way a folder read again does.
+    #[test]
+    fn importing_a_file_again_replaces_it_whole() {
+        let mut db = scratch("import-file-again");
+        import_file(
+            &mut db,
+            &file("/backfiles/politics.cmir", &[("Politics DA", "no link", &["a"])]),
+        )
+        .unwrap();
+        import_file(
+            &mut db,
+            &file(
+                "/backfiles/politics.cmir",
+                &[("Politics DA", "no link", &["b"]), ("Politics DA", "turn", &["c"])],
+            ),
+        )
+        .unwrap();
+
+        let all = all(&db);
+        assert_eq!(all.len(), 2);
+        assert_eq!(from(&db, "/backfiles/politics.cmir", "Politics DA", "no link"), ["b"]);
+    }
+
+    /// One file's import is one file's: its neighbours' rows and what the user
+    /// memorized are nobody else's to delete.
+    #[test]
+    fn importing_one_file_leaves_everything_else_alone() {
+        let mut db = scratch("import-file-alone");
+        memorize(&mut db, "Cap K", "alt solves", "alt solves", &["mine".into()]).unwrap();
+        import(
+            &mut db,
+            "/backfiles",
+            &[file("/backfiles/da.cmir", &[("Politics", "no link", &["a"])])],
+        )
+        .unwrap();
+
+        import_file(
+            &mut db,
+            &file("/backfiles/politics.cmir", &[("Politics DA", "turn", &["b"])]),
+        )
+        .unwrap();
+
+        assert_eq!(from(&db, "", "Cap K", "alt solves"), ["mine"]);
+        assert_eq!(from(&db, "/backfiles/da.cmir", "Politics", "no link"), ["a"]);
+        assert_eq!(from(&db, "/backfiles/politics.cmir", "Politics DA", "turn"), ["b"]);
+    }
+
+    /// A file that now reads as nothing has said so: its old rows go, the same
+    /// rule a folder read again follows about files that have gone.
+    #[test]
+    fn importing_a_file_that_now_yields_nothing_forgets_it() {
+        let mut db = scratch("import-file-empty");
+        import_file(
+            &mut db,
+            &file("/backfiles/politics.cmir", &[("Politics DA", "no link", &["a"])]),
+        )
+        .unwrap();
+
+        import_file(&mut db, &file("/backfiles/politics.cmir", &[])).unwrap();
+
+        assert!(all(&db).is_empty());
+        let orphans: i64 = db
+            .query_row("SELECT count(*) FROM answer WHERE source <> ''", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(orphans, 0);
+    }
+
+    /// The two imports meet in the middle without either corrupting the other:
+    /// a folder read over a singly-imported file sweeps it up, because the
+    /// folder is what that folder says now.
+    #[test]
+    fn a_folder_import_sweeps_up_a_singly_imported_file_under_it() {
+        let mut db = scratch("import-compose");
+        import_file(
+            &mut db,
+            &file("/backfiles/politics.cmir", &[("Politics DA", "no link", &["old"])]),
+        )
+        .unwrap();
+
+        import(
+            &mut db,
+            "/backfiles",
+            &[file("/backfiles/da.cmir", &[("Politics", "turn", &["b"])])],
+        )
+        .unwrap();
+
+        // `politics.cmir` was not in the folder read, so its blocks are gone
+        // with everything else under the prefix — the file will come back at
+        // its next read, as folders always do.
+        assert_eq!(all(&db).len(), 1);
+        assert_eq!(from(&db, "/backfiles/da.cmir", "Politics", "turn"), ["b"]);
     }
 
     #[test]
