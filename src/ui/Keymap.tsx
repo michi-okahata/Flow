@@ -99,6 +99,7 @@ const GROUPS: Group[] = [
     rows: [
       { commands: ["memorySheet"], does: "what you have memorized, as a sheet" },
       { press: ":import", does: "read a folder of cut cards in as blocks" },
+      { press: ":read", does: "read one card file in as blocks" },
       { press: ":forget", does: "drop what an import put there" },
       { commands: ["sidebar"], does: "show or hide the list of sheets" },
       { commands: ["zoomIn", "zoomOut"], does: "zoom" },

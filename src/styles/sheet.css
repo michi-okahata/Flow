@@ -127,6 +127,18 @@
   );
 }
 
+/* The cursor standing in a speech nobody has written in yet — no argument
+   under it, so nothing here but the box one would occupy. One line of the
+   sheet's own type high, and padded as an argument is, so the hole is exactly
+   argument-shaped: what it says is "the first argument of this speech goes
+   here". Everything that makes it read as the cursor is `is-cursor`'s, the
+   same three signals as anywhere else (see argument.css). */
+.flow-cell--vacant {
+  padding: var(--argument-pad);
+  padding-right: var(--column-gap);
+  min-height: calc(1em * var(--argument-line-height));
+}
+
 /* The thread: what the cursor's argument answers, back to the root, and what
    answers it (see `threadOf`). A flow says which argument answers which by
    putting them on one row, one column along — the whole grammar of the sheet,

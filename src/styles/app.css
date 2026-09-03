@@ -7,6 +7,29 @@ body {
   margin: 0;
 }
 
+/* The sheet moves when the cursor moves, and at no other time.
+
+   `overflow: hidden` is the whole of that: a hidden overflow is still a
+   scrolling box, so `scrollIntoView` (FlowSheet.tsx) goes on scrolling the
+   flow exactly as it did, and a trackpad no longer can. It is worth saying
+   as a rule rather than left to habit because of where a flow is typed —
+   both hands on the keys, on a laptop, which puts a palm a centimetre from a
+   surface that scrolls. The cost of a stray inch of scroll is not cosmetic:
+   the cursor is the only thing on the sheet that says which argument you are
+   writing, and there is no key that means "back to where I was" — the sheet
+   comes back only on the next keystroke that moves the cursor, i.e. after
+   you have already typed a line into a column you cannot see.
+
+   Anything with its own scrollbar — the sidebar's list, the keymap — is
+   untouched by this: they are their own scrolling boxes and are read rather
+   than written in, so the trackpad is the right way to move them. */
+html {
+  overflow: hidden;
+  /* There is nothing left to scroll, but macOS bounces the page against the
+     window edge regardless, which is the same drift by another name. */
+  overscroll-behavior: none;
+}
+
 .app {
   /* No side padding: the speech columns run edge to edge, so the first and the
      last are exactly as wide as the ones between them. Their own gutters are

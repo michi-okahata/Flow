@@ -131,14 +131,23 @@ export function buildDictionary(
 
 /**
  * The word being typed at `caret`, or null if the caret isn't at the end of
- * one. Completing from the middle of a word would suggest replacing text the
- * user can see and didn't ask about.
+ * one — and of the argument. Completing from the middle of a word would
+ * suggest replacing text the user can see and didn't ask about.
+ *
+ * The end of the *argument* and not merely of the word, because of how the
+ * suggestion is drawn: the ghost layer holds the whole text with the
+ * suggestion spliced in at the caret, and the textarea above it holds the text
+ * without it (see ArgumentEditor.tsx). Everything after the caret therefore
+ * sits one suggestion-width apart in the two layers, and grey ghost text lands
+ * on top of black real text — which reads as the editor having predicted
+ * several words at once, in a pile. Only trailing whitespace may follow, since
+ * a suggestion drawn over a space collides with nothing.
  */
 export function wordAt(
   text: string,
   caret: number,
 ): { start: number; word: string } | null {
-  if (caret < text.length && WORD_CHAR.test(text[caret])) return null;
+  if (text.slice(caret).trim() !== "") return null;
   let start = caret;
   while (start > 0 && WORD_CHAR.test(text[start - 1])) start--;
   const word = text.slice(start, caret);

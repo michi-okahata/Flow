@@ -24,6 +24,21 @@ export interface EditorState {
   /** The argument being text-edited, or null. Suspends the keymap while set. */
   editingId: string | null;
   /**
+   * The speech the cursor is standing in when it is standing on no argument —
+   * which is the only way to be somewhere on a sheet without being on one, and
+   * it exists for the one place that has nothing to offer: a speech nobody has
+   * written in yet. Until this, an empty column could not be reached at all —
+   * `l` scans past it to the next column that has arguments, and a named jump
+   * had nowhere to land — so the first argument of a speech could only be
+   * started by knowing to count one out (`5n`).
+   *
+   * `:2nr` on an empty 2NR sets it, and so does `l` at the right-hand end of
+   * what has been written; `n` spends it; anything that lands the cursor on a
+   * real argument clears it (see `run`). Null whenever `cursorId` is set: the
+   * two are one cursor, and an argument already knows its own speech.
+   */
+  column: number | null;
+  /**
    * Digits typed but not yet spent. They name a speech to the commands that
    * create an argument (`4a` answers in the 4th speech, not the next one) and
    * a repeat count to the motions (`3j`). Null when nothing is pending.
@@ -130,6 +145,7 @@ export interface EditorState {
 export const initialEditorState: EditorState = {
   cursorId: null,
   editingId: null,
+  column: null,
   count: null,
   focus: null,
   command: null,
@@ -200,6 +216,7 @@ export function openSheet(
     ...state,
     cursors,
     cursorId: cursors[to] ?? null,
+    column: null,
     editingId: null,
     count: null,
     focus: null,
@@ -248,9 +265,13 @@ export type Command = (ctx: CommandContext) => EditorState;
  */
 export function followFocus(state: EditorState, flow: Flow): EditorState {
   if (state.focus === null) return state;
-  // No cursor to judge by (it was just deleted, say): leave the pin alone.
-  if (!state.cursorId || !flow.has(state.cursorId)) return state;
-  const col = flow.speechOf(state.cursorId);
+  // The cursor's speech, whether it is standing on an argument or in an empty
+  // column (see `EditorState.column`) — focus follows the cursor, and standing
+  // in the 2NR to start it is as much "where I am" as being on an argument.
+  // Neither: it was just deleted, say, and the pin is left alone.
+  const on = state.cursorId && flow.has(state.cursorId);
+  if (!on && state.column === null) return state;
+  const col = on ? flow.speechOf(state.cursorId!) : state.column!;
   const drift = col - state.focus;
   if (Math.abs(drift) <= FOCUS_REACH) return state;
   return {
@@ -280,5 +301,8 @@ export function moveCursorTo(
   id: string,
   placed: Placed[],
 ): EditorState {
-  return releaseSelection(followFocus({ ...state, cursorId: id }, flow), placed);
+  return releaseSelection(
+    followFocus({ ...state, cursorId: id, column: null }, flow),
+    placed,
+  );
 }

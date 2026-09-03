@@ -39,13 +39,58 @@ function counted({ state, speeches }: CommandContext): number | null {
   return c !== null && c >= 1 && c <= speeches.length ? c - 1 : null;
 }
 
-/** Spatial cursor movement. Never mutates the flow. */
+/**
+ * Put the cursor in `col`: on the argument nearest the one it is on now, or —
+ * when that speech has nothing in it yet — in the column itself, on nothing
+ * (see `EditorState.column`). Clamped to the speeches that exist, so walking
+ * off either end of the sheet stops at it.
+ */
+function intoColumn(ctx: CommandContext, col: number): EditorState {
+  const { state, placed, speeches } = ctx;
+  const to = Math.max(0, Math.min(col, speeches.length - 1));
+  const landing = placed.some((p) => p.col === to)
+    ? moveToColumn(placed, state.cursorId, to)
+    : null;
+  return landing
+    ? { ...state, cursorId: landing, column: null }
+    : { ...state, cursorId: null, column: to };
+}
+
+/**
+ * Spatial cursor movement. Never mutates the flow.
+ *
+ * Two rules beyond `moveCursor`'s, both about the speech that has nothing in
+ * it yet — the speech being given, which is the one you most need to get to:
+ *
+ * - `h`/`l` step into an empty column when there is no written one left that
+ *   way. Empty columns *between* two written ones are still skipped, which is
+ *   what makes crossing a flow one keystroke per argument rather than one per
+ *   speech; it is only at the end of what has been written that the next
+ *   empty speech is somewhere to be rather than a gap to cross.
+ * - standing in an empty column, `h`/`l` go on stepping and `j`/`k` do
+ *   nothing: there is no column order to walk when the column is empty.
+ */
 const motion =
   (m: Motion): Command =>
-  ({ state, placed }) => ({
-    ...state,
-    cursorId: moveCursor(placed, state.cursorId, m, state.count ?? 1),
-  });
+  (ctx) => {
+    const { state, placed } = ctx;
+    const count = state.count ?? 1;
+
+    if (state.cursorId === null && state.column !== null) {
+      if (m === "j" || m === "k") return state;
+      return intoColumn(ctx, state.column + (m === "l" ? count : -count));
+    }
+
+    const next = moveCursor(placed, state.cursorId, m, count);
+    if ((m === "h" || m === "l") && next === state.cursorId) {
+      // Nowhere written that way. The empty speech next door is still
+      // somewhere to go — and only the one next door, since a count that ran
+      // out of arguments has already been spent getting here.
+      const at = placed.find((p) => p.id === next);
+      if (at) return intoColumn(ctx, at.col + (m === "l" ? 1 : -1));
+    }
+    return { ...state, cursorId: next, column: null };
+  };
 
 /**
  * Open the command line. It takes a speech by name — `:2ac` — which is the one
@@ -83,6 +128,8 @@ export type SessionCommand =
   | { kind: "save" }
   /** Read a folder of CardMirror files in as blocks. */
   | { kind: "import" }
+  /** Read one CardMirror file in as blocks. */
+  | { kind: "read" }
   /** Drop everything a folder of files put there. */
   | { kind: "forget" }
   /** Write `~/.flow/config.json` out with the defaults in it, if there is none. */
@@ -146,6 +193,10 @@ export function parseSessionCommand(text: string): SessionCommand | null {
     // out of one, which a command that reads thousands of blocks in needs.
     case "import":
       return { kind: "import" };
+    // One file rather than a folder: the one card file somebody handed over,
+    // or the one that changed since its backfile was read.
+    case "read":
+      return { kind: "read" };
     case "forget":
       return { kind: "forget" };
 
@@ -205,7 +256,7 @@ export function resolveSpeech(text: string, speeches: Speech[]): number | null {
  * worse than doing nothing.
  */
 export function submitCommand(ctx: CommandContext): EditorState {
-  const { state, placed, speeches, flow } = ctx;
+  const { state, speeches, flow } = ctx;
   const closed = { ...state, command: null };
   // The keymap, on `:?`. Handled here rather than as a `SessionCommand` in App
   // because it is exactly what a `Command` is — a pure transition from one
@@ -214,8 +265,11 @@ export function submitCommand(ctx: CommandContext): EditorState {
   if (typed === "?" || typed === "help") return { ...closed, help: true };
   const col = resolveSpeech(state.command ?? "", speeches);
   if (col === null) return closed;
+  // Naming a speech with nothing in it is how you go to the one you are about
+  // to give, so it lands there on nothing rather than doing nothing — see
+  // `intoColumn`, which is the same landing `l` makes at the end of the sheet.
   return followFocus(
-    { ...closed, cursorId: moveToColumn(placed, state.cursorId, col) },
+    intoColumn({ ...ctx, state: closed }, col),
     flow,
   );
 }
@@ -238,6 +292,7 @@ const editing = (state: EditorState, id: string): EditorState => ({
   ...state,
   cursorId: id,
   editingId: id,
+  column: null,
   count: null,
 });
 
@@ -330,8 +385,12 @@ const newRoot =
   (where: "after" | "before"): Command =>
   (ctx) => {
     const { state, flow } = ctx;
+    // The empty column before the 1AC: `n` in a speech you have walked into is
+    // what starting that speech means, and it is the whole point of being able
+    // to stand there at all (see `EditorState.column`).
     const speech =
-      counted(ctx) ?? (state.cursorId ? flow.speechOf(state.cursorId) : 0);
+      counted(ctx) ??
+      (state.cursorId ? flow.speechOf(state.cursorId) : (state.column ?? 0));
     return editing(state, flow.addRoot(state.cursorId, "", speech, where));
   };
 
@@ -632,10 +691,49 @@ const put =
   };
 
 /**
+ * Where the cursor goes once `ids` (and everything answering them) are gone:
+ * the nearest surviving argument *above* the first of them in its own column,
+ * failing that the argument it was answering, failing that whatever is left
+ * below it.
+ *
+ * The column first, because that is where you were working. Landing on the
+ * parent — which is what this used to do outright — walks the cursor a column
+ * to the left on every delete, and a shallow flow means "a column to the left"
+ * is usually the 1AC: deleting a typo in the 2NR put the cursor at the top of
+ * the sheet, six speeches back from the one being given.
+ *
+ * Asked *after* the deletion, so `flow.has` is the whole test for whether a
+ * candidate survived it — a selected argument's subtree can include arguments
+ * in its own column (an answer written into its parent's speech), and they are
+ * as gone as the rest.
+ */
+function landingAfter(
+  { flow, placed }: CommandContext,
+  ids: string[],
+  /** What the first of them was answering, read before it was deleted. */
+  parent: string | null,
+): string | null {
+  const above = parent && flow.has(parent) ? parent : null;
+  const at = placed.find((p) => p.id === ids[0]);
+  if (!at) return above;
+
+  const column = columnOrder(placed, at.col);
+  const from = column.findIndex((p) => p.id === ids[0]);
+  for (let i = from - 1; i >= 0; i--) {
+    if (flow.has(column[i].id)) return column[i].id;
+  }
+  if (above) return above;
+  for (let i = from + 1; i < column.length; i++) {
+    if (flow.has(column[i].id)) return column[i].id;
+  }
+  return null;
+}
+
+/**
  * Delete every selected argument, and everything responding to each — one
- * commit, so a multi-argument `x` is one undo step. Lands on the parent of
- * the first selected argument, the same rule single-argument delete already
- * used.
+ * commit, so a multi-argument `x` is one undo step. Lands where
+ * `landingAfter` says, which is as close to the deleted argument as the sheet
+ * still has.
  *
  * What was deleted is kept, exactly as `y` would have kept it, so `x` … `p` is
  * how an argument *moves* — including onto another sheet, which nothing else
@@ -659,10 +757,15 @@ const remove: Command = (ctx) => {
       if (flow.has(id)) flow.remove(id);
     }
   });
+  const landing = landingAfter(ctx, ids, parent);
   return {
     ...state,
     yanked,
-    cursorId: parent,
+    cursorId: landing,
+    // Deleting the last argument in a speech leaves you standing in the speech
+    // rather than nowhere — which is what `n` needs to write the next one, and
+    // stops emptying a column out from meaning "back to the 1AC".
+    column: landing ? null : (ctx.placed.find((p) => p.id === ids[0])?.col ?? null),
     editingId: null,
     count: null,
     selectAnchor: null,
@@ -1033,6 +1136,26 @@ export function runsWhileEditing(key: string, keys: Record<string, string>): boo
 }
 
 /**
+ * The commands a held key should go on running — the motions, and nothing
+ * else. Everything else on the keymap either writes to the flow or opens
+ * something, and neither is a thing to do forty times because a finger stayed
+ * down.
+ *
+ * The repeat itself is the window listener's (see useKeymap), not the OS's:
+ * holding `j` is how you cross a flow, and the speed of that shouldn't be
+ * whatever the Keyboard pane happens to say — least of all the half-second
+ * stall before the system's first repeat, which is the whole feel of moving
+ * around a sheet. Named here because this is where what a key *does* is
+ * decided, and because a config that rebinds the motions rebinds this with
+ * them.
+ */
+const REPEATS = new Set(["left", "down", "up", "right"]);
+
+export function repeatsWhileHeld(key: string, keys: Record<string, string>): boolean {
+  return REPEATS.has(keys[key]);
+}
+
+/**
  * Commands that read or extend the selection rather than starting fresh from
  * the cursor — `run` leaves `selectAnchor` standing for these and drops it for
  * everything else (see `run`, below). The motions are here even though left
@@ -1097,8 +1220,12 @@ export function run(
   const command = name ? commands[name] : undefined;
   if (!command) return null;
   const next = command(ctx);
+  // One cursor, however it moved: standing *in* a speech is only ever the
+  // no-argument case (see `EditorState.column`), so anything that landed on an
+  // argument gives the column up here rather than each command remembering to.
+  const here = next.cursorId === null ? next : { ...next, column: null };
   const counting = COUNTING.has(name);
-  const spent = counting ? next : { ...next, count: null };
+  const spent = counting ? here : { ...here, count: null };
   const kept =
     counting || KEEPS_SELECTION.has(name) ? spent : { ...spent, selectAnchor: null };
   return releaseSelection(followFocus(kept, ctx.flow), ctx.placed);

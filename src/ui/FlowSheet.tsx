@@ -12,11 +12,21 @@ import { FOCUS_REACH, type Argument, type Placed, type Speech } from "../model/t
 import type { Peer } from "../sync/presence";
 
 /**
- * The row gap lives here rather than in the stylesheet because the row heights
- * are computed, not authored: `measureRows` has to count the gaps a spanning
+ * The gap between one argument and the next, in the sheet's authored pixels.
+ *
+ * It lives here rather than in the stylesheet because the row heights are
+ * computed, not authored: `measureRows` has to count the gaps a spanning
  * argument covers. The column gap is pure presentation and stays in CSS.
+ *
+ * Four rather than the two it was, which is the difference between a column
+ * that reads as a list of arguments and one that reads as a paragraph: at
+ * 10px type the leading inside a wrapped argument is already a couple of
+ * pixels, so a two-pixel gap made "the next line of this argument" and "the
+ * next argument" the same distance apart. It is the only thing on the sheet
+ * separating them — an argument is bare text with a rule down its left, and
+ * the rule is spoken for three times over (see sheet.css).
  */
-const ROW_GAP = 2;
+const ROW_GAP = 4;
 
 /**
  * Zoom scales the sheet through a CSS custom property (see the stylesheet), but
@@ -73,6 +83,13 @@ interface FlowSheetProps {
   /** The argument to keep on screen. The sheet scrolls to follow it. */
   cursorId?: string | null;
   /**
+   * The speech the cursor is standing in when it is on no argument — a speech
+   * nobody has written in yet (see `EditorState.column`). Drawn as an empty
+   * cursor cell at the top of that column: there is no argument to highlight,
+   * and the one thing the sheet has to say is where the next one would go.
+   */
+  column?: number | null;
+  /**
    * Where a visual selection began, or null/undefined when there isn't one.
    * The selected arguments are derived from this and `cursorId` (see
    * `selectionRange`) rather than passed as a list — same reasoning as the
@@ -98,6 +115,7 @@ export function FlowSheet({
   renderArgument,
   placed: placedProp,
   cursorId,
+  column = null,
   selectAnchor = null,
   focus = null,
   zoom = 1,
@@ -130,9 +148,14 @@ export function FlowSheet({
   // which makes them the cheapest possible answer to "where am I", and the only
   // one that survives scrolling to the bottom of a long flow.
   const cursorCol = useMemo(
-    () => placed.find((p) => p.id === cursorId)?.col ?? null,
-    [placed, cursorId],
+    () => placed.find((p) => p.id === cursorId)?.col ?? column,
+    [placed, cursorId, column],
   );
+
+  // Whether the cursor is standing in a column rather than on an argument, and
+  // that column is one of the ones being drawn.
+  const vacantCol =
+    cursorCol !== null && !placed.some((p) => p.id === cursorId) ? cursorCol : null;
 
   const byId = useMemo(() => {
     const m = new Map<string, Argument>();
@@ -166,6 +189,27 @@ export function FlowSheet({
   // Cells are `align-self: start`, so each cell's box is its argument's
   // natural height — measuring it can't feed back into the track sizes we set.
   const cellRefs = useRef(new Map<string, HTMLDivElement>());
+
+  // One ref callback per argument, kept. Written inline it would be a new
+  // function on every render, and React detaches and re-attaches a ref whose
+  // identity changed — every cell on the sheet, thirty times a second while a
+  // motion key is held down (see useKeymap), to end up with the same map it
+  // started with. Each one drops itself when its cell goes.
+  const cellRefFns = useRef(new Map<string, (el: HTMLDivElement | null) => void>());
+  const cellRef = (id: string) => {
+    let fn = cellRefFns.current.get(id);
+    if (!fn) {
+      fn = (el: HTMLDivElement | null) => {
+        if (el) cellRefs.current.set(id, el);
+        else {
+          cellRefs.current.delete(id);
+          cellRefFns.current.delete(id);
+        }
+      };
+      cellRefFns.current.set(id, fn);
+    }
+    return fn;
+  };
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [rowHeights, setRowHeights] = useState<number[]>([]);
 
@@ -349,6 +393,17 @@ export function FlowSheet({
         />
       )}
 
+      {/* The cursor with no argument under it: the top of a speech nobody has
+          written in yet. An empty box rather than a placeholder word, because
+          nothing is there — what it says is "you are here, and `n` writes the
+          first argument", which is exactly what an argument-shaped hole says. */}
+      {vacantCol !== null && inFocus(vacantCol, range) && (
+        <div
+          className="flow-cell flow-cell--vacant is-cursor"
+          style={{ gridColumn: colPos.get(vacantCol), gridRow: 1 + headerOffset }}
+        />
+      )}
+
       {placed
         // Out-of-focus columns aren't drawn at all — see `visibleCols` above.
         .filter((p) => inFocus(p.col, range))
@@ -369,10 +424,7 @@ export function FlowSheet({
           return (
             <div
               key={p.id}
-              ref={(el) => {
-                if (el) cellRefs.current.set(p.id, el);
-                else cellRefs.current.delete(p.id);
-              }}
+              ref={cellRef(p.id)}
               // The cursor is worn by the cell rather than by the argument,
               // so that the number is inside the highlight — see the
               // stylesheet. Selection itself isn't a per-cell class any more
@@ -390,6 +442,18 @@ export function FlowSheet({
               style={{
                 gridColumn: colPos.get(p.col),
                 gridRow: `${p.row + 1 + headerOffset} / span ${p.span}`,
+                // Row 0 sits a row-gap short of the header's own underline —
+                // pulled up by exactly that gap and padded back down by the
+                // same amount, so the rule down its left reaches the line
+                // instead of stopping short of it, and the text lands where it
+                // always did. The measure takes the padding back out again
+                // (see `flush`, above), which is what keeps the track the
+                // height of the argument and the gap below it the same as
+                // every other argument's.
+                ...(p.row === 0 && {
+                  marginTop: `${-rowGap}px`,
+                  paddingTop: `${rowGap}px`,
+                }),
                 // The peer's own colour, handed to the stylesheet — it is per
                 // peer, so it cannot be authored there. See peers.css.
                 ...(peer && ({ "--peer": peer.color } as CSSProperties)),

@@ -266,9 +266,9 @@ export function StatusLine({
         </span>
       )}
 
-      {/* And what did take. Only `:import` and `:forget`, which otherwise
-          finish with nothing on the screen moving — `m` says what it did by the
-          answer count appearing on the argument. */}
+      {/* And what did take. Only `:import`, `:read` and `:forget`, which
+          otherwise finish with nothing on the screen moving — `m` says what it
+          did by the answer count appearing on the argument. */}
       {memoryNote !== null && (
         <span className="app__file" title={memoryNote}>
           {memoryNote}

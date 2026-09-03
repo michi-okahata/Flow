@@ -8,7 +8,7 @@ import {
 } from "react";
 import { POLICY_SPEECHES } from "./model/format";
 import { MEMORY_SPEECHES } from "./memory/sheet";
-import { seedSample } from "./model/sample";
+import { firstSheet } from "./model/start";
 import { layoutFlow } from "./layout/grid";
 import { selectionRange } from "./layout/navigate";
 import { buildDictionary, textsOf, wordsIn } from "./editor/completion";
@@ -67,9 +67,9 @@ function App() {
     hosting,
     error,
     actions,
-  } = useSession(seedSample);
+  } = useSession(firstSheet);
   const [editor, setEditor] = useState(initialEditorState);
-  const { cursorId, editingId, count, focus, command, selectAnchor, sidebar, help, zoom, rewrites } =
+  const { cursorId, editingId, column, count, focus, command, selectAnchor, sidebar, help, zoom, rewrites } =
     editor;
 
   // Where the round is kept. Bound by `:open` or the first `:save`, and from
@@ -254,9 +254,16 @@ function App() {
     actions.setLocal({
       cursorId: away ? null : cursorId,
       editing: !away && editingId !== null,
-      speech: !away && cursorId && flow?.has(cursorId) ? flow.speechOf(cursorId) : null,
+      // The speech, whether the cursor is on an argument or standing in an
+      // empty column — a partner watching the sidebar should see you move into
+      // the 2NR to start it, which is the moment it matters most.
+      speech: away
+        ? null
+        : cursorId && flow?.has(cursorId)
+          ? flow.speechOf(cursorId)
+          : column,
     });
-  }, [actions, flow, roots, cursorId, editingId, editor.memory]);
+  }, [actions, flow, roots, cursorId, column, editingId, editor.memory]);
 
   const { beginText, queueText, flushText } = useTextBuffer(flow);
 
@@ -416,6 +423,9 @@ function App() {
       case "import":
         memory.importFrom();
         break;
+      case "read":
+        memory.importFile();
+        break;
       case "forget":
         memory.forget();
         break;
@@ -491,6 +501,7 @@ function App() {
           placed={placed}
           speeches={speeches}
           cursorId={cursorId}
+          column={column}
           selectAnchor={selectAnchor}
           focus={focus}
           zoom={zoom}
