@@ -32,6 +32,8 @@ import type { AiConfig } from "../agent/types";
 
 /** How a key is written in the file — the same string `keyOf` builds. */
 const KEY_PATTERN = /^(C-)?(M-)?.+$/;
+/** Number keys are fixed count syntax rather than configurable actions. */
+const NUMBER_KEY = /^(?:C-)?(?:M-)?[0-9]$/;
 
 export interface Config {
   /** The keymap to run: the defaults with the file read over them. */
@@ -78,6 +80,9 @@ export function readConfig(text: string | null): Config {
       problems.push(`config.json: "keys" is not an object`);
     } else {
       for (const [key, name] of Object.entries(bindings)) {
+        // Old seeded configs listed digit0…digit9. Ignore those entries (and
+        // any attempted numeric action) quietly: numbers always build counts.
+        if (NUMBER_KEY.test(key)) continue;
         if (!KEY_PATTERN.test(key)) {
           problems.push(`config.json: "${key}" is not a key`);
           continue;

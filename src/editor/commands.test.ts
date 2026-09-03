@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { POLICY_SPEECHES } from "../model/format";
-import { parseSessionCommand, resolveSheet, resolveSpeech } from "./commands";
+import { Round } from "../model/round";
+import { initialEditorState, type CommandContext } from "./state";
+import { parseSessionCommand, resolveSheet, resolveSpeech, run } from "./commands";
 
 /**
  * What the command line understands. Only the pure half is here — the parse and
@@ -123,5 +125,32 @@ describe("resolveSpeech", () => {
   it("is nothing when nothing matches", () => {
     expect(resolveSpeech("1nr", speeches)).toBeNull();
     expect(resolveSpeech("", speeches)).toBeNull();
+  });
+});
+
+describe("numeric prefixes", () => {
+  function context(state = initialEditorState): CommandContext {
+    const round = new Round();
+    const sheet = round.addSheet("test");
+    return {
+      state,
+      round,
+      flow: round.flow(sheet),
+      placed: [],
+      speeches: POLICY_SPEECHES,
+      sheets: { list: round.sheets(), active: sheet, open: () => {}, move: () => {} },
+      memory: { recall: () => ({ block: null }), keep: () => {} },
+    };
+  }
+
+  it("treats bare numbers as fixed count syntax even when a mapping claims one", () => {
+    const one = run("1", context(), { "1": "delete" });
+    expect(one?.count).toBe(1);
+    const twelve = run("2", context(one!), {});
+    expect(twelve?.count).toBe(12);
+  });
+
+  it("ignores a leading zero", () => {
+    expect(run("0", context(), {})?.count).toBeNull();
   });
 });

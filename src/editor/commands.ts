@@ -940,31 +940,21 @@ const shiftSheet =
 const toggleSidebar: Command = ({ state }) => ({ ...state, sidebar: !state.sidebar });
 
 /**
- * Build up the pending count. A leading `0` is ignored rather than starting
- * one, leaving the key free to mean something later.
+ * Build up the pending count. A leading `0` is ignored because a count cannot
+ * begin with zero; after another digit it remains part of the count.
  */
-const digit =
-  (d: number): Command =>
-  ({ state }) =>
-    state.count === null && d === 0
-      ? state
-      : { ...state, count: (state.count ?? 0) * 10 + d };
-
-const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+const DIGIT = /^[0-9]$/;
 
 /**
- * The digits, as ten commands — `digit3` and the rest.
- *
- * They are in the registry like everything else so that a config can move
- * them (a numeric keypad, a layout where the digits are shifted), and named
- * rather than special-cased so that `run` can ask what a key *did* rather
- * than what it was: only these ten leave a count standing, and after a remap
- * the character on the key no longer says which ten they are.
+ * A number is editor grammar, not an action: it builds the count consumed by
+ * the next action and therefore cannot be rebound in the key config.
  */
-const digits = Object.fromEntries(DIGITS.map((d) => [`digit${d}`, digit(d)]));
-
-/** Their names, for the one rule that has to know them. */
-const COUNTING = new Set(DIGITS.map((d) => `digit${d}`));
+function count(state: EditorState, key: string): EditorState {
+  const digit = Number(key);
+  return state.count === null && digit === 0
+    ? state
+    : { ...state, count: (state.count ?? 0) * 10 + digit };
+}
 
 /**
  * The keymap's lookup key for an event. Shift is already baked into `key`
@@ -993,7 +983,6 @@ export function keyOf(e: {
  * `addChildInNextSpeech`.
  */
 export const commands: Record<string, Command> = {
-  ...digits,
   left: motion("h"),
   down: motion("j"),
   up: motion("k"),
@@ -1051,7 +1040,6 @@ export const commands: Record<string, Command> = {
  * the one it is joining.
  */
 export const DEFAULT_KEYS: Record<string, string> = {
-  ...Object.fromEntries(DIGITS.map((d) => [String(d), `digit${d}`])),
   h: "left",
   j: "down",
   k: "up",
@@ -1194,11 +1182,10 @@ const KEEPS_SELECTION = new Set([
  * state to the next. `DEFAULT_KEYS` is the default so that a caller with no
  * config — a test, most usefully — can go on asking what `x` does.
  *
- * Clearing the pending count lives here and not in the commands: only the
- * digits build it up, and every other key spends it and is done. The selection
- * is cleared the same way and for the same reason — only the commands that
- * read or extend it (`KEEPS_SELECTION`, plus the digits a count for one of
- * them might need) get to leave it standing; anything else — editing an
+ * Numbers are handled before the configurable lookup: they are count syntax,
+ * never actions. Every action spends that pending count. The selection is
+ * cleared on the same boundary — only the commands that read or extend it
+ * (`KEEPS_SELECTION`) leave it standing; anything else — editing an
  * argument, answering, undo — is a normal-mode action that shouldn't inherit a
  * selection some earlier `select` left lying around.
  */
@@ -1220,6 +1207,7 @@ export function run(
     const closes = keys[key] === "cancel" || key === "?" || key === "Enter";
     return closes ? { ...ctx.state, help: false } : ctx.state;
   }
+  if (DIGIT.test(key)) return count(ctx.state, key);
   const name = keys[key];
   const command = name ? commands[name] : undefined;
   if (!command) return null;
@@ -1228,9 +1216,7 @@ export function run(
   // no-argument case (see `EditorState.column`), so anything that landed on an
   // argument gives the column up here rather than each command remembering to.
   const here = next.cursorId === null ? next : { ...next, column: null };
-  const counting = COUNTING.has(name);
-  const spent = counting ? here : { ...here, count: null };
-  const kept =
-    counting || KEEPS_SELECTION.has(name) ? spent : { ...spent, selectAnchor: null };
+  const spent = { ...here, count: null };
+  const kept = KEEPS_SELECTION.has(name) ? spent : { ...spent, selectAnchor: null };
   return releaseSelection(followFocus(kept, ctx.flow), ctx.placed);
 }
