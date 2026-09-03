@@ -1,9 +1,13 @@
 import type { Argument } from "../model/types";
 
-/** Configuration for one interchangeable agent backend. */
-export interface AgentConfig {
+/**
+ * Configuration for one interchangeable AI backend. Provider identity,
+ * routing, and wire protocol are deliberately independent.
+ */
+export interface AiConfig {
   provider: string;
-  endpoint: string;
+  router: string;
+  api: string;
   model: string;
   apiKey?: string;
 }
@@ -47,6 +51,8 @@ export interface Transcript {
   startedAt: string;
   finishedAt: string;
   provider: string;
+  router: string;
+  api: string;
   model: string;
   request: AgentRequest;
   response: string;

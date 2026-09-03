@@ -4,10 +4,10 @@ import type { Argument } from "../model/types";
 import { providerFor } from "./provider";
 import { saveTranscript } from "./transcript";
 import { applyAgentToolCall } from "./tools";
-import type { AgentConfig, AgentDraft, AgentRequest, Transcript } from "./types";
+import type { AiConfig, AgentDraft, AgentRequest, Transcript } from "./types";
 
 interface AgentContext {
-  config: AgentConfig | null;
+  config: AiConfig | null;
   flow: Flow | null;
   roots: Argument[];
   sheet: string;
@@ -96,6 +96,8 @@ export function useAgent(ctx: AgentContext): AgentControls {
       startedAt,
       finishedAt: startedAt,
       provider: provider.name,
+      router: config.router,
+      api: config.api,
       model: config.model,
       request,
       response: "",

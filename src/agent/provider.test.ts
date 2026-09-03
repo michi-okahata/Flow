@@ -30,8 +30,9 @@ describe("OpenAI-compatible provider", () => {
       headers: { "content-type": "text/event-stream" },
     })));
     const provider = new OpenAICompatibleProvider({
-      provider: "openai-compatible",
-      endpoint: "http://agent.test/v1/chat/completions",
+      provider: "test-provider",
+      router: "http://agent.test/v1/chat/completions",
+      api: "openai-chat-completions",
       model: "test",
     });
 

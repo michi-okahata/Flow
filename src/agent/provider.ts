@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentProvider, AgentRequest } from "./types";
+import type { AiConfig, AgentProvider, AgentRequest } from "./types";
 
 type Json = Record<string, unknown>;
 
@@ -6,22 +6,24 @@ type Json = Record<string, unknown>;
  * Provider registry. The sheet depends only on AgentProvider; wire formats stay
  * here, so another backend is an adapter rather than a change to the editor.
  */
-export function providerFor(config: AgentConfig): AgentProvider {
-  switch (config.provider) {
-    case "openai-compatible":
+export function providerFor(config: AiConfig): AgentProvider {
+  switch (config.api) {
+    case "openai-chat-completions":
       return new OpenAICompatibleProvider(config);
     default:
-      throw new Error(`unknown agent provider: ${config.provider}`);
+      throw new Error(`unknown AI API: ${config.api}`);
   }
 }
 
 export class OpenAICompatibleProvider implements AgentProvider {
-  readonly name = "openai-compatible";
+  readonly name: string;
 
-  constructor(private readonly config: AgentConfig) {}
+  constructor(private readonly config: AiConfig) {
+    this.name = config.provider;
+  }
 
   async *generate(request: AgentRequest, signal: AbortSignal): AsyncIterable<string> {
-    const response = await fetch(this.config.endpoint, {
+    const response = await fetch(this.config.router, {
       method: "POST",
       signal,
       headers: {

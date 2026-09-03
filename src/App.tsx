@@ -84,7 +84,7 @@ function App() {
   const config = useConfig();
 
   const agent = useAgent({
-    config: config.agent,
+    config: config.ai,
     flow: roundFlow,
     roots: roundRoots,
     sheet: roundSheets.find((sheet) => sheet.id === roundSheet)?.title ?? "",

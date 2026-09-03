@@ -1,5 +1,5 @@
 import { commands, DEFAULT_KEYS } from "./commands";
-import type { AgentConfig } from "../agent/types";
+import type { AiConfig } from "../agent/types";
 
 /**
  * `~/.flow/config.json`, as the keymap sees it.
@@ -43,10 +43,10 @@ export interface Config {
    */
   problems: string[];
   /** The optional answer-generating backend. */
-  agent: AgentConfig | null;
+  ai: AiConfig | null;
 }
 
-export const DEFAULT_CONFIG: Config = { keys: DEFAULT_KEYS, problems: [], agent: null };
+export const DEFAULT_CONFIG: Config = { keys: DEFAULT_KEYS, problems: [], ai: null };
 
 /**
  * Read a config, or the defaults where there is no file.
@@ -63,11 +63,11 @@ export function readConfig(text: string | null): Config {
   } catch (e) {
     // The parser's own message names the line and column, which is the whole
     // of what is useful about a syntax error in a file you are editing.
-    return { keys: DEFAULT_KEYS, problems: [`config.json: ${(e as Error).message}`], agent: null };
+    return { keys: DEFAULT_KEYS, problems: [`config.json: ${(e as Error).message}`], ai: null };
   }
 
   if (!isObject(parsed)) {
-    return { keys: DEFAULT_KEYS, problems: ["config.json: expected an object"], agent: null };
+    return { keys: DEFAULT_KEYS, problems: ["config.json: expected an object"], ai: null };
   }
 
   const keys = { ...DEFAULT_KEYS };
@@ -97,27 +97,58 @@ export function readConfig(text: string | null): Config {
     }
   }
 
-  return { keys, problems, agent: readAgent(parsed.agent, problems) };
+  return {
+    keys,
+    problems,
+    ai: parsed.ai !== undefined
+      ? readAi(parsed.ai, problems)
+      : readLegacyAgent(parsed.agent, problems),
+  };
 }
 
-function readAgent(value: unknown, problems: string[]): AgentConfig | null {
+function readAi(value: unknown, problems: string[]): AiConfig | null {
+  if (value === undefined || value === null) return null;
+  if (!isObject(value)) {
+    problems.push(`config.json: "ai" is not an object`);
+    return null;
+  }
+  if (
+    typeof value.provider !== "string" ||
+    typeof value.router !== "string" ||
+    typeof value.api !== "string" ||
+    typeof value.model !== "string"
+  ) {
+    problems.push(`config.json: "ai" needs provider, router, api, and model strings`);
+    return null;
+  }
+  if (value.apiKey !== undefined && typeof value.apiKey !== "string") {
+    problems.push(`config.json: "ai.apiKey" is not a string`);
+    return null;
+  }
+  return {
+    provider: value.provider,
+    router: value.router,
+    api: value.api,
+    model: value.model,
+    ...(typeof value.apiKey === "string" ? { apiKey: value.apiKey } : {}),
+  };
+}
+
+/** Read the first implementation's `agent`/`endpoint` shape without requiring migration. */
+function readLegacyAgent(value: unknown, problems: string[]): AiConfig | null {
   if (value === undefined || value === null) return null;
   if (!isObject(value)) {
     problems.push(`config.json: "agent" is not an object`);
     return null;
   }
-  const provider = value.provider ?? "openai-compatible";
-  if (typeof provider !== "string" || typeof value.endpoint !== "string" || typeof value.model !== "string") {
+  if (typeof value.endpoint !== "string" || typeof value.model !== "string") {
     problems.push(`config.json: "agent" needs endpoint and model strings`);
     return null;
   }
-  if (value.apiKey !== undefined && typeof value.apiKey !== "string") {
-    problems.push(`config.json: "agent.apiKey" is not a string`);
-    return null;
-  }
   return {
-    provider,
-    endpoint: value.endpoint,
+    provider: typeof value.provider === "string" ? value.provider : "configured",
+    router: value.endpoint,
+    api: "openai-chat-completions",
     model: value.model,
     ...(typeof value.apiKey === "string" ? { apiKey: value.apiKey } : {}),
   };
@@ -144,9 +175,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function defaultConfigText(): string {
   return `${JSON.stringify({
     keys: DEFAULT_KEYS,
-    agent: {
-      provider: "openai-compatible",
-      endpoint: "http://localhost:11434/v1/chat/completions",
+    ai: {
+      provider: "ollama",
+      router: "http://localhost:11434/v1/chat/completions",
+      api: "openai-chat-completions",
       model: "qwen3:8b",
     },
   }, null, 2)}\n`;
