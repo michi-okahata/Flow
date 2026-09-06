@@ -39,6 +39,7 @@ import { useConfig } from "./ui/useConfig";
 import { useTextBuffer } from "./ui/useTextBuffer";
 import { DEFAULT_MARK, DEFAULT_SUPPORT, type Argument } from "./model/types";
 import { useAgent } from "./agent/useAgent";
+import { agentDraftRoots } from "./agent/draft";
 
 /**
  * The composition root: it owns the round and the editor state, derives what
@@ -161,6 +162,12 @@ function App() {
   );
 
   const placed = useMemo(() => layoutFlow(roots), [roots]);
+  // A draft is local rather than CRDT state, but it still occupies a cell while
+  // it loads. The keyboard uses that projection so its cursor can cross it.
+  const navigablePlaced = useMemo(
+    () => agent.draft && !editor.memory ? layoutFlow(agentDraftRoots(roots, agent.draft)) : placed,
+    [agent.draft, editor.memory, roots, placed],
+  );
 
   // Rebuilt as the flow changes, so completions pick up the round's own
   // vocabulary as it's written. Memorized answers feed it too: they are words
@@ -227,8 +234,8 @@ function App() {
   // a cached list, so anything that wants to know how many arguments are
   // selected has to ask `placed` the same question the commands do.
   const selectionSize = useMemo(
-    () => selectionRange(placed, selectAnchor, cursorId).length,
-    [placed, selectAnchor, cursorId],
+    () => selectionRange(navigablePlaced, selectAnchor, cursorId).length,
+    [navigablePlaced, selectAnchor, cursorId],
   );
 
   // Who wrote the argument the cursor is on, when it wasn't this peer. Only in
@@ -346,7 +353,7 @@ function App() {
       state: editor,
       flow,
       round,
-      placed,
+      placed: navigablePlaced,
       speeches,
       sheets: sheetControls,
       memory,

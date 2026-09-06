@@ -113,6 +113,14 @@ export function useKeymap(
         e.preventDefault();
         return;
       }
+      // Shadows take part in spatial movement, but are not arguments yet:
+      // editing or marking one would address an ID the CRDT deliberately does
+      // not know. Tab/Esc above are their only mutations.
+      const onDraft = state.cursorId?.startsWith(`agent-draft:${agent?.draft?.requestId}:`);
+      if (onDraft && !["left", "right", "up", "down"].includes(keys[key])) {
+        e.preventDefault();
+        return;
+      }
       // The textarea owns the keyboard while an argument is open, and the
       // command line owns it while that is — except for the chords that are
       // meant to work mid-sentence, and then only from inside an argument.

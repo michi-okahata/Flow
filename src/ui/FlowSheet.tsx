@@ -11,6 +11,7 @@ import { selectionRange, threadOf } from "../layout/navigate";
 import { FOCUS_REACH, type Argument, type Placed, type Speech } from "../model/types";
 import type { Peer } from "../sync/presence";
 import type { AgentDraft } from "../agent/types";
+import { agentDraftRoots } from "../agent/draft";
 
 /**
  * The gap between one argument and the next, in the sheet's authored pixels.
@@ -131,8 +132,8 @@ export function FlowSheet({
     : [];
   const draftIndex = new Map(draftIds.map((id, index) => [id, index]));
   const visualRoots = useMemo(
-    () => (draft ? withDraft(roots, draft, draftIds) : roots),
-    [roots, draft, draftIds],
+    () => (draft ? agentDraftRoots(roots, draft) : roots),
+    [roots, draft],
   );
   const ownPlaced = useMemo(
     () => (placedProp && !draft ? [] : layoutFlow(visualRoots)),
