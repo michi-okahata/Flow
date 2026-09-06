@@ -70,6 +70,15 @@ export function useConfig(): Configuration {
     return () => window.removeEventListener("focus", read);
   }, [read]);
 
+  // `:config` is a one-shot confirmation, not state the user needs to carry
+  // around. Errors remain until the file is fixed; this fades after there has
+  // been time to read it.
+  useEffect(() => {
+    if (note === null) return;
+    const timeout = window.setTimeout(() => setNote(null), 10_000);
+    return () => window.clearTimeout(timeout);
+  }, [note]);
+
   /**
    * Both answers are worth saying and neither is a failure: one tells you the
    * file is there now, the other tells you it was already — which is the reply

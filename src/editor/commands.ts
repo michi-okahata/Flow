@@ -1121,7 +1121,9 @@ export const DEFAULT_KEYS: Record<string, string> = {
  * reaching it (ArgumentEditor) — so they ask here rather than each keeping
  * their own list.
  */
-const WHILE_EDITING = new Set(["recall", "generate"]);
+// Generation belongs to normal mode. `g` must remain ordinary text while an
+// argument is being written.
+const WHILE_EDITING = new Set(["recall"]);
 
 export function runsWhileEditing(key: string, keys: Record<string, string>): boolean {
   return WHILE_EDITING.has(keys[key]);

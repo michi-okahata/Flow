@@ -62,7 +62,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
   const generate = useCallback((argumentId: string) => {
     const { config, flow, roots, sheet, speeches } = latest.current;
     if (!config) {
-      setError("agent is not configured — add an agent section to ~/.flow/config.json");
+      setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
       return;
     }
     if (!flow?.has(argumentId)) return;
