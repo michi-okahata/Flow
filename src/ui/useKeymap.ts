@@ -1,13 +1,14 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { keyOf, repeatsWhileHeld, run, runsWhileEditing } from "../editor/commands";
+import { selectionRange } from "../layout/navigate";
 import type { CommandContext, EditorState } from "../editor/state";
 import type { AgentDraft } from "../agent/types";
 
 interface AgentKeys {
-  draft: AgentDraft | null;
-  generate: (argumentId: string) => void;
-  accept: () => string | null;
-  dismiss: () => void;
+  drafts: AgentDraft[];
+  generate: (argumentIds: string[]) => void;
+  accept: (requestId?: string) => string | null;
+  dismiss: (requestId?: string) => void;
 }
 
 /**
@@ -102,21 +103,24 @@ export function useKeymap(
 
       // A shadow answer owns only its two explicit decisions. Other keys keep
       // navigating the sheet without silently accepting or throwing it away.
-      if (agent?.draft && key === "Tab") {
-        const id = agent.accept();
+      const shadow = agent?.drafts.find((draft) =>
+        state.cursorId?.startsWith(`agent-draft:${draft.requestId}:`),
+      );
+      if (agent && agent.drafts.length && key === "Tab") {
+        const id = agent.accept(shadow?.requestId);
         e.preventDefault();
         if (id) setEditor((s) => ({ ...s, cursorId: id, editingId: null, column: null }));
         return;
       }
-      if (agent?.draft && key === "Escape") {
-        agent.dismiss();
+      if (agent && agent.drafts.length && key === "Escape") {
+        agent.dismiss(shadow?.requestId);
         e.preventDefault();
         return;
       }
       // Shadows take part in spatial movement, but are not arguments yet:
       // editing or marking one would address an ID the CRDT deliberately does
       // not know. Tab/Esc above are their only mutations.
-      const onDraft = state.cursorId?.startsWith(`agent-draft:${agent?.draft?.requestId}:`);
+      const onDraft = shadow !== undefined;
       if (onDraft && !["left", "right", "up", "down"].includes(keys[key])) {
         e.preventDefault();
         return;
@@ -143,8 +147,11 @@ export function useKeymap(
       stop();
 
       if (keys[key] === "generate") {
-        if (state.cursorId) {
-          agent?.generate(state.cursorId);
+        const selected = state.selectAnchor
+          ? selectionRange(placed, state.selectAnchor, state.cursorId).map((p) => p.id)
+          : state.cursorId ? [state.cursorId] : [];
+        if (selected.length) {
+          agent?.generate(selected);
           setEditor((s) => ({ ...s, editingId: null, count: null }));
         }
         e.preventDefault();

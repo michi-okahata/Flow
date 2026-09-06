@@ -109,8 +109,8 @@ interface FlowSheetProps {
    * would make you look away from the flow to read it.
    */
   peers?: Peer[];
-  /** A generated response that has not entered the CRDT yet. */
-  draft?: AgentDraft | null;
+  /** Generated responses that have not entered the CRDT yet. */
+  drafts?: AgentDraft[];
 }
 
 export function FlowSheet({
@@ -124,22 +124,23 @@ export function FlowSheet({
   focus = null,
   zoom = 1,
   peers = [],
-  draft = null,
+  drafts = [],
 }: FlowSheetProps): React.ReactElement {
-  const draftIds = draft
-    ? (draft.status === "ready" ? draft.answers : [""])
-      .map((_, index) => `agent-draft:${draft.requestId}:${index}`)
-    : [];
-  const draftIndex = new Map(draftIds.map((id, index) => [id, index]));
+  const draftIndex = new Map<string, { draft: AgentDraft; index: number }>();
+  for (const draft of drafts) {
+    for (const [index] of (draft.status === "ready" ? draft.answers : [""]).entries()) {
+      draftIndex.set(`agent-draft:${draft.requestId}:${index}`, { draft, index });
+    }
+  }
   const visualRoots = useMemo(
-    () => (draft ? agentDraftRoots(roots, draft) : roots),
-    [roots, draft],
+    () => (drafts.length ? agentDraftRoots(roots, drafts) : roots),
+    [roots, drafts],
   );
   const ownPlaced = useMemo(
-    () => (placedProp && !draft ? [] : layoutFlow(visualRoots)),
-    [visualRoots, placedProp, draft],
+    () => (placedProp && drafts.length === 0 ? [] : layoutFlow(visualRoots)),
+    [visualRoots, placedProp, drafts.length],
   );
-  const placed = placedProp && !draft ? placedProp : ownPlaced;
+  const placed = placedProp && drafts.length === 0 ? placedProp : ownPlaced;
 
   // The selected arguments, if any — everything between the anchor and the
   // cursor, top to bottom (`selectionRange` walks the column in that order

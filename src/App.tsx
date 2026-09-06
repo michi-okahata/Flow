@@ -165,8 +165,8 @@ function App() {
   // A draft is local rather than CRDT state, but it still occupies a cell while
   // it loads. The keyboard uses that projection so its cursor can cross it.
   const navigablePlaced = useMemo(
-    () => agent.draft && !editor.memory ? layoutFlow(agentDraftRoots(roots, agent.draft)) : placed,
-    [agent.draft, editor.memory, roots, placed],
+    () => agent.drafts.length && !editor.memory ? layoutFlow(agentDraftRoots(roots, agent.drafts)) : placed,
+    [agent.drafts, editor.memory, roots, placed],
   );
 
   // Rebuilt as the flow changes, so completions pick up the round's own
@@ -526,7 +526,7 @@ function App() {
           // argument that isn't drawn here, and the sidebar is where they show.
           peers={peers.filter((peer) => peer.sheet === activeSheet)}
           renderArgument={renderArgument}
-          draft={editor.memory ? null : agent.draft}
+          drafts={editor.memory ? [] : agent.drafts}
         />
       </div>
 

@@ -15,10 +15,10 @@ interface AgentContext {
 }
 
 export interface AgentControls {
-  draft: AgentDraft | null;
-  generate: (argumentId: string) => void;
-  accept: () => string | null;
-  dismiss: () => void;
+  drafts: AgentDraft[];
+  generate: (argumentIds: string[]) => void;
+  accept: (requestId?: string) => string | null;
+  dismiss: (requestId?: string) => void;
   error: string | null;
 }
 
@@ -27,46 +27,46 @@ function id(): string {
 }
 
 export function useAgent(ctx: AgentContext): AgentControls {
-  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [drafts, setDrafts] = useState<AgentDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const abort = useRef<AbortController | null>(null);
-  const transcript = useRef<Transcript | null>(null);
+  const abort = useRef(new Map<string, AbortController>());
+  const transcript = useRef(new Map<string, Transcript>());
   const latest = useRef(ctx);
-  const draftRef = useRef(draft);
+  const draftRef = useRef(drafts);
   latest.current = ctx;
-  draftRef.current = draft;
+  draftRef.current = drafts;
 
-  const finish = useCallback((outcome: Transcript["outcome"], message?: string) => {
-    const current = transcript.current;
+  const finish = useCallback((requestId: string, outcome: Transcript["outcome"], message?: string) => {
+    const current = transcript.current.get(requestId);
     if (!current) return;
-    transcript.current = null;
+    transcript.current.delete(requestId);
     void saveTranscript({
       ...current,
       finishedAt: new Date().toISOString(),
-      response: draftRef.current?.text ?? current.response,
+      response: draftRef.current.find((draft) => draft.requestId === requestId)?.text ?? current.response,
       outcome,
       ...(message ? { error: message } : {}),
     });
   }, []);
 
-  const dismiss = useCallback(() => {
-    abort.current?.abort();
-    abort.current = null;
-    if (draftRef.current) finish(
-      draftRef.current.status === "generating" ? "cancelled" : "dismissed",
-    );
-    setDraft(null);
+  const dismiss = useCallback((requestId?: string) => {
+    const targets = requestId ? draftRef.current.filter((draft) => draft.requestId === requestId) : draftRef.current;
+    for (const draft of targets) {
+      abort.current.get(draft.requestId)?.abort();
+      abort.current.delete(draft.requestId);
+      finish(draft.requestId, draft.status === "generating" ? "cancelled" : "dismissed");
+    }
+    setDrafts((current) => requestId ? current.filter((draft) => draft.requestId !== requestId) : []);
     setError(null);
   }, [finish]);
 
-  const generate = useCallback((argumentId: string) => {
+  const generateOne = useCallback((argumentId: string) => {
     const { config, flow, roots, sheet, speeches } = latest.current;
     if (!config) {
       setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
       return;
     }
     if (!flow?.has(argumentId)) return;
-    dismiss();
     const speech = flow.speechOf(argumentId) + 1;
     if (speech >= speeches) {
       setError("there is no speech after this argument");
@@ -89,9 +89,9 @@ export function useAgent(ctx: AgentContext): AgentControls {
       return;
     }
     const controller = new AbortController();
-    abort.current = controller;
+    abort.current.set(request.id, controller);
     const startedAt = new Date().toISOString();
-    transcript.current = {
+    transcript.current.set(request.id, {
       id: request.id,
       startedAt,
       finishedAt: startedAt,
@@ -102,60 +102,64 @@ export function useAgent(ctx: AgentContext): AgentControls {
       request,
       response: "",
       outcome: "generated",
-    };
+    });
     setError(null);
-    setDraft({
+    setDrafts((current) => [...current, {
       requestId: request.id,
       sourceId: argumentId,
       speech,
       text: "",
       answers: [],
       status: "generating",
-    });
+    }]);
 
     void (async () => {
       try {
         for await (const token of provider.generate(request, controller.signal)) {
-          if (transcript.current?.id === request.id) {
-            transcript.current.response += token;
+          const running = transcript.current.get(request.id);
+          if (running) {
+            running.response += token;
           }
-          setDraft((current) =>
-            current?.requestId === request.id
-              ? { ...current, text: current.text + token }
-              : current,
-          );
+          setDrafts((current) => current.map((draft) =>
+            draft.requestId === request.id ? { ...draft, text: draft.text + token } : draft,
+          ));
         }
-        abort.current = null;
-        setDraft((current) => {
-          if (current?.requestId !== request.id) return current;
-          const response = current.text.trim();
+        abort.current.delete(request.id);
+        setDrafts((current) => current.map((draft) => {
+          if (draft.requestId !== request.id) return draft;
+          const response = draft.text.trim();
           const answers = parseAnswers(response);
           if (answers.length === 0) {
             const message = "agent returned no answer";
             setError(message);
-            finish("error", message);
-            return { ...current, status: "error", error: message };
+            finish(request.id, "error", message);
+            return { ...draft, status: "error", error: message };
           }
-          if (transcript.current?.id === request.id) transcript.current.response = response;
-          return { ...current, text: response, answers, status: "ready" };
-        });
+          const saved = transcript.current.get(request.id);
+          if (saved) saved.response = response;
+          return { ...draft, text: response, answers, status: "ready" };
+        }));
       } catch (cause) {
         if (controller.signal.aborted) return;
-        abort.current = null;
+        abort.current.delete(request.id);
         const message = cause instanceof Error ? cause.message : String(cause);
         setError(message);
-        setDraft((current) =>
-          current?.requestId === request.id
-            ? { ...current, status: "error", error: message }
-            : current,
-        );
-        finish("error", message);
+        setDrafts((current) => current.map((draft) =>
+          draft.requestId === request.id ? { ...draft, status: "error", error: message } : draft,
+        ));
+        finish(request.id, "error", message);
       }
     })();
-  }, [dismiss, finish]);
+  }, [finish]);
 
-  const accept = useCallback((): string | null => {
-    const current = draftRef.current;
+  const generate = useCallback((argumentIds: string[]) => {
+    for (const argumentId of new Set(argumentIds)) generateOne(argumentId);
+  }, [generateOne]);
+
+  const accept = useCallback((requestId?: string): string | null => {
+    const current = requestId
+      ? draftRef.current.find((draft) => draft.requestId === requestId)
+      : draftRef.current.find((draft) => draft.status === "ready");
     const { flow } = latest.current;
     if (!current || !flow || current.status !== "ready" || current.answers.length === 0) return null;
     const toolCalls = current.answers.map((text) => ({
@@ -164,28 +168,29 @@ export function useAgent(ctx: AgentContext): AgentControls {
     }));
     try {
       const results = toolCalls.map((toolCall) => applyAgentToolCall(flow, toolCall));
-      if (transcript.current) {
-        transcript.current = { ...transcript.current, toolCalls, toolResults: results };
+      const saved = transcript.current.get(current.requestId);
+      if (saved) {
+        transcript.current.set(current.requestId, { ...saved, toolCalls, toolResults: results });
       }
-      finish("accepted");
-      setDraft(null);
+      finish(current.requestId, "accepted");
+      setDrafts((drafts) => drafts.filter((draft) => draft.requestId !== current.requestId));
       setError(null);
       return results[0]?.argumentId ?? null;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(message);
-      finish("error", message);
-      setDraft(null);
+      finish(current.requestId, "error", message);
+      setDrafts((drafts) => drafts.filter((draft) => draft.requestId !== current.requestId));
       return null;
     }
   }, [finish]);
 
   useEffect(() => () => {
-    abort.current?.abort();
-    finish("cancelled");
+    for (const controller of abort.current.values()) controller.abort();
+    for (const draft of draftRef.current) finish(draft.requestId, "cancelled");
   }, [finish]);
 
-  return { draft, generate, accept, dismiss, error };
+  return { drafts, generate, accept, dismiss, error };
 }
 
 /** A provider should return the requested JSON array; plain text stays useful
