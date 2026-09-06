@@ -3,10 +3,10 @@ import type { AiConfig, AgentProvider, AgentRequest } from "./types";
 type Json = Record<string, unknown>;
 
 const FLOW_SYSTEM_PROMPT = [
-  "You are writing one argument for a live debate flow.",
-  "Reply with a single, direct response to the selected argument: at most two short sentences and 45 words.",
+  "You are writing arguments for a live debate flow.",
+  "Reply with exactly three distinct, direct responses to the selected argument; each is at most two short sentences and 45 words.",
   "Prefer the decisive warrant or impact over background, caveats, summaries, and transitions.",
-  "Return only the argument text—no label, markdown, preamble, or explanation.",
+  "Return only a JSON array of three strings—no label, markdown, preamble, or explanation.",
 ].join(" ");
 
 /**

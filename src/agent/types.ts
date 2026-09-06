@@ -41,7 +41,10 @@ export interface AgentDraft {
   requestId: string;
   sourceId: string;
   speech: number;
+  /** Raw streamed provider output, retained for the transcript. */
   text: string;
+  /** Separate arguments parsed from the provider's completed response. */
+  answers: string[];
   status: "generating" | "ready" | "error";
   error?: string;
 }
@@ -57,7 +60,7 @@ export interface Transcript {
   request: AgentRequest;
   response: string;
   outcome: "generated" | "accepted" | "dismissed" | "cancelled" | "error";
-  toolCall?: AgentToolCall;
-  toolResult?: { argumentId: string };
+  toolCalls?: AgentToolCall[];
+  toolResults?: { argumentId: string }[];
   error?: string;
 }

@@ -125,10 +125,14 @@ export function FlowSheet({
   peers = [],
   draft = null,
 }: FlowSheetProps): React.ReactElement {
-  const draftId = draft ? `agent-draft:${draft.requestId}` : null;
+  const draftIds = draft
+    ? (draft.status === "ready" ? draft.answers : [""])
+      .map((_, index) => `agent-draft:${draft.requestId}:${index}`)
+    : [];
+  const draftIndex = new Map(draftIds.map((id, index) => [id, index]));
   const visualRoots = useMemo(
-    () => (draft && draftId ? withDraft(roots, draft, draftId) : roots),
-    [roots, draft, draftId],
+    () => (draft ? withDraft(roots, draft, draftIds) : roots),
+    [roots, draft, draftIds],
   );
   const ownPlaced = useMemo(
     () => (placedProp && !draft ? [] : layoutFlow(visualRoots)),
@@ -472,10 +476,12 @@ export function FlowSheet({
                   takes the room its characters need and no more — so an
                   unmarked argument simply starts with its first word. */}
               {marker && <span className="flow-num">{marker}</span>}
-              {p.id === draftId ? (
+              {draftIndex.has(p.id) ? (
                 <div className="flow-argument flow-argument--agent" aria-live="polite">
                   {arg.text || (draft?.status === "error" ? draft.error : "thinking…")}
-                  {draft?.status === "ready" && <span className="flow-agent-hint">Tab</span>}
+                  {draft?.status === "ready" && draftIndex.get(p.id) === 0 && (
+                    <span className="flow-agent-hint">Tab ×{draft.answers.length}</span>
+                  )}
                 </div>
               ) : renderArgument ? renderArgument(arg) : <DefaultArgument text={arg.text} />}
             </div>
@@ -512,18 +518,18 @@ export function FlowSheet({
   );
 }
 
-function withDraft(roots: Argument[], draft: AgentDraft, id: string): Argument[] {
-  const shadow: Argument = {
+function withDraft(roots: Argument[], draft: AgentDraft, ids: string[]): Argument[] {
+  const shadows: Argument[] = ids.map((id, index) => ({
     id,
     speech: draft.speech,
-    text: draft.text,
+    text: draft.status === "ready" ? draft.answers[index] ?? "" : "",
     mark: "none",
     support: "analytic",
     children: [],
-  };
+  }));
   const walk = (argument: Argument): Argument =>
     argument.id === draft.sourceId
-      ? { ...argument, children: [...argument.children, shadow] }
+      ? { ...argument, children: [...argument.children, ...shadows] }
       : { ...argument, children: argument.children.map(walk) };
   return roots.map(walk);
 }

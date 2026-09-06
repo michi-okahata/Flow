@@ -109,6 +109,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
       sourceId: argumentId,
       speech,
       text: "",
+      answers: [],
       status: "generating",
     });
 
@@ -127,15 +128,16 @@ export function useAgent(ctx: AgentContext): AgentControls {
         abort.current = null;
         setDraft((current) => {
           if (current?.requestId !== request.id) return current;
-          const text = current.text.trim();
-          if (!text) {
+          const response = current.text.trim();
+          const answers = parseAnswers(response);
+          if (answers.length === 0) {
             const message = "agent returned no answer";
             setError(message);
             finish("error", message);
             return { ...current, status: "error", error: message };
           }
-          if (transcript.current?.id === request.id) transcript.current.response = text;
-          return { ...current, text, status: "ready" };
+          if (transcript.current?.id === request.id) transcript.current.response = response;
+          return { ...current, text: response, answers, status: "ready" };
         });
       } catch (cause) {
         if (controller.signal.aborted) return;
@@ -155,24 +157,20 @@ export function useAgent(ctx: AgentContext): AgentControls {
   const accept = useCallback((): string | null => {
     const current = draftRef.current;
     const { flow } = latest.current;
-    if (!current || !flow || current.status !== "ready" || !current.text) return null;
-    const toolCall = {
+    if (!current || !flow || current.status !== "ready" || current.answers.length === 0) return null;
+    const toolCalls = current.answers.map((text) => ({
       name: "add_argument" as const,
-      arguments: {
-        under: current.sourceId,
-        speech: current.speech,
-        text: current.text,
-      },
-    };
+      arguments: { under: current.sourceId, speech: current.speech, text },
+    }));
     try {
-      const result = applyAgentToolCall(flow, toolCall);
+      const results = toolCalls.map((toolCall) => applyAgentToolCall(flow, toolCall));
       if (transcript.current) {
-        transcript.current = { ...transcript.current, toolCall, toolResult: result };
+        transcript.current = { ...transcript.current, toolCalls, toolResults: results };
       }
       finish("accepted");
       setDraft(null);
       setError(null);
-      return result.argumentId;
+      return results[0]?.argumentId ?? null;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(message);
@@ -188,4 +186,21 @@ export function useAgent(ctx: AgentContext): AgentControls {
   }, [finish]);
 
   return { draft, generate, accept, dismiss, error };
+}
+
+/** A provider should return the requested JSON array; plain text stays useful
+ * if a compatible endpoint ignores that instruction. */
+function parseAnswers(response: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(response);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((answer): answer is string => typeof answer === "string")
+        .map((answer) => answer.trim())
+        .filter(Boolean);
+    }
+  } catch {
+    // Keep a non-conforming provider's text as one accept-able argument.
+  }
+  return response ? [response] : [];
 }
