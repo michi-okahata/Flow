@@ -41,5 +41,9 @@ describe("OpenAI-compatible provider", () => {
       tokens.push(token);
     }
     expect(tokens).toEqual(["not ", "unique"]);
+    const call = vi.mocked(fetch).mock.calls[0];
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body.messages[0].content).toContain("45 words");
+    expect(body.messages[0].content).toContain("at most two short sentences");
   });
 });

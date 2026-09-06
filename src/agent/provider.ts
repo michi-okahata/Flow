@@ -2,6 +2,13 @@ import type { AiConfig, AgentProvider, AgentRequest } from "./types";
 
 type Json = Record<string, unknown>;
 
+const FLOW_SYSTEM_PROMPT = [
+  "You are writing one argument for a live debate flow.",
+  "Reply with a single, direct response to the selected argument: at most two short sentences and 45 words.",
+  "Prefer the decisive warrant or impact over background, caveats, summaries, and transitions.",
+  "Return only the argument text—no label, markdown, preamble, or explanation.",
+].join(" ");
+
 /**
  * Provider registry. The sheet depends only on AgentProvider; wire formats stay
  * here, so another backend is an adapter rather than a change to the editor.
@@ -38,8 +45,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
         messages: [
           {
             role: "system",
-            content:
-              "You are flowing a debate. Answer the selected argument with one concise flow-ready argument. Return only the argument text; no label, markdown, or explanation.",
+            content: FLOW_SYSTEM_PROMPT,
           },
           {
             role: "user",
