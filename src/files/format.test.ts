@@ -204,6 +204,14 @@ describe("fileNameFor", () => {
 });
 
 describe("roundFrom", () => {
+  it("persists debate-wide agent chat on the first sheet", () => {
+    const agent = [{ id: "m1", role: "user" as const, content: "prioritize case turns", createdAt: "now" }];
+    const text = encodeSheet({ title: "Case", order: 0, roots: [], agentMessages: agent });
+    const round = roundFrom([decodeSheet(text)!]);
+    expect(round.agentMessages()).toEqual(agent);
+    expect(JSON.parse(text).agent).toEqual(agent);
+  });
+
   it("builds a round whose sheets read back as they were written", () => {
     const sheets = [
       sheetJson({

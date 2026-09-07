@@ -107,6 +107,7 @@ pub fn run() {
             store::store_transcript,
             store::store_memorized,
             store::store_imported,
+            store::store_context,
             store::store_memorize,
             store::store_rename_position,
             store::store_import,

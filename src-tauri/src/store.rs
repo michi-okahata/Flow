@@ -77,6 +77,7 @@ const MIGRATIONS: &[&str] = &[
         text     TEXT NOT NULL,
         PRIMARY KEY (source, position, key, ordinal)
      )",
+    "ALTER TABLE answer ADD COLUMN context TEXT NOT NULL DEFAULT ''",
 ];
 
 /// An argument and the answers to it.
@@ -97,6 +98,9 @@ pub struct Block {
     pub argument: String,
     /// The answers, in the order they were flowed in.
     pub answers: Vec<String>,
+    /// Rich card text aligned with answers; blank for user-memorized blocks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub context: Vec<String>,
 }
 
 /// Every error out of here names the file: a `.flow` that won't open is the one
@@ -209,7 +213,7 @@ fn blocks(db: &Connection, mine: bool) -> rusqlite::Result<Vec<Block>> {
             Some(block)
                 if block.key == key && block.position == position && block.source == source =>
             {
-                block.answers.push(answer)
+                block.answers.push(answer);
             }
             _ => out.push(Block {
                 source,
@@ -217,6 +221,7 @@ fn blocks(db: &Connection, mine: bool) -> rusqlite::Result<Vec<Block>> {
                 key,
                 argument,
                 answers: vec![answer],
+                context: Vec::new(),
             }),
         }
     }
@@ -410,6 +415,8 @@ pub struct Imported {
     pub key: String,
     pub argument: String,
     pub answers: Vec<String>,
+    #[serde(default)]
+    pub context: Vec<String>,
 }
 
 /// One file's worth of them.
@@ -418,6 +425,42 @@ pub struct ImportedFile {
     /// The file's path, which is what its blocks are filed under.
     pub source: String,
     pub blocks: Vec<Imported>,
+}
+
+#[derive(Deserialize)]
+pub struct ContextRef {
+    pub source: String,
+    pub position: String,
+    pub key: String,
+}
+
+/// Hydrate only context blocks already selected by the compact frontend index.
+/// Returning arrays in request order makes merging cheap and deterministic.
+#[tauri::command]
+pub fn store_context(
+    app: tauri::AppHandle,
+    refs: Vec<ContextRef>,
+) -> Result<Vec<Vec<String>>, String> {
+    let path = path(&app)?;
+    let db = open(&path)?;
+    let mut query = db
+        .prepare(
+            "SELECT context FROM answer
+             WHERE source = ?1 AND position = ?2 AND key = ?3
+             ORDER BY ordinal",
+        )
+        .map_err(at(&path))?;
+    refs.into_iter()
+        .map(|reference| {
+            let rows = query
+                .query_map(
+                    [&reference.source, &reference.position, &reference.key],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(at(&path))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(at(&path))
+        })
+        .collect()
 }
 
 /// The path prefix that means "inside this folder". Built with a separator on
@@ -453,8 +496,8 @@ fn import(db: &mut Connection, dir: &str, files: &[ImportedFile]) -> rusqlite::R
              VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))",
         )?;
         let mut add_answer = tx.prepare(
-            "INSERT INTO answer (source, position, key, ordinal, text)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO answer (source, position, key, ordinal, text, context)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
         for file in files {
             for block in &file.blocks {
@@ -474,6 +517,7 @@ fn import(db: &mut Connection, dir: &str, files: &[ImportedFile]) -> rusqlite::R
                         block.key,
                         ordinal as i64,
                         answer,
+                        block.context.get(ordinal).map(String::as_str).unwrap_or(answer),
                     ])?;
                 }
             }
@@ -626,6 +670,7 @@ mod tests {
                     key: (*key).into(),
                     argument: (*key).into(),
                     answers: answers.iter().map(|a| (*a).to_string()).collect(),
+                    context: Vec::new(),
                 })
                 .collect(),
         }

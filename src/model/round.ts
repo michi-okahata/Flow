@@ -1,7 +1,8 @@
 import { LoroDoc, UndoManager } from "loro-crdt";
-import type { LoroMovableList, Subscription } from "loro-crdt";
+import type { LoroList, LoroMovableList, Subscription } from "loro-crdt";
 import { Flow, LEGACY_SHEET_ID } from "./flow";
 import type { PeerRecord, Role } from "./types";
+import type { AgentMessage } from "../agent/types";
 
 /**
  * A round: every sheet in it, and the document they all live in.
@@ -28,12 +29,17 @@ const SHEETS_KEY = "sheets";
  */
 const PEERS_KEY = "peers";
 
+/** Debate-wide assistant conversation. It belongs to the round rather than a
+ * sheet so strategy given on case still guides a draft on a disadvantage. */
+const AGENT_CHAT_KEY = "agent-chat";
+
 /**
  * Commit origin for writes that are bookkeeping rather than flowing — the peer
  * registry, for now. `UndoManager` is told to ignore this prefix, so pressing
  * `u` after a peer joins undoes your last argument rather than their arrival.
  */
 const SYNC_ORIGIN = "sync";
+const AGENT_ORIGIN = "agent";
 
 /**
  * Commits closer together than this collapse into one undo step. Text writes
@@ -61,6 +67,7 @@ export class Round {
       and it has to run anyway — a peer on a newer version may write a shape
       this one doesn't know. */
   private readonly list: LoroMovableList;
+  private readonly agentChat: LoroList;
   private readonly history: UndoManager;
   /** One `Flow` per sheet, built on demand and kept — a sheet's tree handle is
       cheap, but handing out a new one per render would break identity for
@@ -75,10 +82,35 @@ export class Round {
   constructor(doc: LoroDoc = new LoroDoc()) {
     this.doc = doc;
     this.list = doc.getMovableList(SHEETS_KEY);
+    this.agentChat = doc.getList(AGENT_CHAT_KEY);
     this.history = new UndoManager(doc, {
       mergeInterval: UNDO_MERGE_MS,
-      excludeOriginPrefixes: [SYNC_ORIGIN],
+      excludeOriginPrefixes: [SYNC_ORIGIN, AGENT_ORIGIN],
     });
+  }
+
+  /* ---- debate assistant ------------------------------------------------ */
+
+  agentMessages(): AgentMessage[] {
+    const value: unknown = this.agentChat.toJSON();
+    return Array.isArray(value) ? value.filter(isAgentMessage) : [];
+  }
+
+  appendAgentMessage(message: AgentMessage): void {
+    this.agentChat.insert(this.agentChat.length, message);
+    this.doc.commit({ origin: AGENT_ORIGIN });
+  }
+
+  replaceAgentMessages(messages: AgentMessage[]): void {
+    this.agentChat.clear();
+    for (const message of messages) this.agentChat.insert(this.agentChat.length, message);
+    this.doc.commit({ origin: AGENT_ORIGIN });
+  }
+
+  clearAgentMessages(): void {
+    if (this.agentChat.length === 0) return;
+    this.agentChat.clear();
+    this.doc.commit({ origin: AGENT_ORIGIN });
   }
 
   /* ---- the sheets -------------------------------------------------------- */
@@ -394,5 +426,15 @@ function isSheet(value: unknown): value is SheetInfo {
     typeof sheet?.id === "string" &&
     sheet.id.length > 0 &&
     typeof sheet.title === "string"
+  );
+}
+
+function isAgentMessage(value: unknown): value is AgentMessage {
+  const message = value as AgentMessage | null;
+  return (
+    typeof message?.id === "string" &&
+    (message.role === "user" || message.role === "assistant") &&
+    typeof message.content === "string" &&
+    typeof message.createdAt === "string"
   );
 }

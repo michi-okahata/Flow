@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Flow } from "../model/flow";
+import type { Round } from "../model/round";
 import type { Argument } from "../model/types";
+import type { Block } from "../memory/store";
+import { compactDebate, compactHistory, selectContext } from "./context";
 import { providerFor } from "./provider";
 import { saveTranscript } from "./transcript";
 import { applyAgentToolCall } from "./tools";
-import type { AiConfig, AgentDraft, AgentRequest, Transcript } from "./types";
+import type {
+  AiConfig,
+  AgentChatRequest,
+  AgentDraft,
+  AgentMessage,
+  AgentRequest,
+  DebateSheet,
+  Transcript,
+} from "./types";
 
 interface AgentContext {
   config: AiConfig | null;
@@ -12,6 +23,10 @@ interface AgentContext {
   roots: Argument[];
   sheet: string;
   speeches: number;
+  round: Round;
+  imported: Block[];
+  loadContext: (blocks: Block[]) => Promise<Block[]>;
+  selectedArgument?: string;
 }
 
 export interface AgentControls {
@@ -19,6 +34,12 @@ export interface AgentControls {
   generate: (argumentIds: string[]) => void;
   accept: (requestId?: string) => string | null;
   dismiss: (requestId?: string) => void;
+  messages: AgentMessage[];
+  chatDraft: string;
+  chatting: boolean;
+  send: (message: string) => void;
+  clearChat: () => void;
+  importedCount: number;
   error: string | null;
 }
 
@@ -29,12 +50,25 @@ function id(): string {
 export function useAgent(ctx: AgentContext): AgentControls {
   const [drafts, setDrafts] = useState<AgentDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatting, setChatting] = useState(false);
   const abort = useRef(new Map<string, AbortController>());
   const transcript = useRef(new Map<string, Transcript>());
   const latest = useRef(ctx);
   const draftRef = useRef(drafts);
+  const chatAbort = useRef<AbortController | null>(null);
+  const chatRequest = useRef<string | null>(null);
+  const activeRound = useRef(ctx.round);
   latest.current = ctx;
   draftRef.current = drafts;
+
+  const debate = useCallback((budget: number): DebateSheet[] => {
+    const { round } = latest.current;
+    return compactDebate(
+      round.sheets().map((sheet) => ({ title: sheet.title, arguments: round.flow(sheet.id).roots() })),
+      budget,
+    );
+  }, []);
 
   const finish = useCallback((requestId: string, outcome: Transcript["outcome"], message?: string) => {
     const current = transcript.current.get(requestId);
@@ -61,7 +95,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
   }, [finish]);
 
   const generateOne = useCallback((argumentId: string) => {
-    const { config, flow, roots, sheet, speeches } = latest.current;
+    const { config, flow, roots, sheet, speeches, round, imported, loadContext } = latest.current;
     if (!config) {
       setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
       return;
@@ -73,6 +107,17 @@ export function useAgent(ctx: AgentContext): AgentControls {
       return;
     }
 
+    const budget = config.contextTokens ?? 12_000;
+    const history = compactHistory(round.agentMessages(), Math.floor(budget * 0.35));
+    const contextQuery =
+      `${sheet} ${flow.textOf(argumentId)} ${history.filter((m) => m.role === "user").map((m) => m.content).join(" ")}`;
+    const contextBudget = Math.floor(budget * 0.3);
+    const context = selectContext(
+      imported,
+      contextQuery,
+      sheet,
+      contextBudget,
+    );
     const request: AgentRequest = {
       id: id(),
       sheet,
@@ -80,6 +125,9 @@ export function useAgent(ctx: AgentContext): AgentControls {
       argument: flow.textOf(argumentId),
       speech,
       flow: roots,
+      debate: debate(Math.floor(budget * 0.35)),
+      history,
+      context,
     };
     let provider;
     try {
@@ -115,6 +163,12 @@ export function useAgent(ctx: AgentContext): AgentControls {
 
     void (async () => {
       try {
+        request.context = selectContext(
+          await loadContext(request.context),
+          contextQuery,
+          sheet,
+          contextBudget,
+        );
         for await (const token of provider.generate(request, controller.signal)) {
           const running = transcript.current.get(request.id);
           if (running) {
@@ -150,7 +204,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
         finish(request.id, "error", message);
       }
     })();
-  }, [finish]);
+  }, [debate, finish]);
 
   const generate = useCallback((argumentIds: string[]) => {
     for (const argumentId of new Set(argumentIds)) generateOne(argumentId);
@@ -185,12 +239,152 @@ export function useAgent(ctx: AgentContext): AgentControls {
     }
   }, [finish]);
 
+  const send = useCallback((raw: string) => {
+    const message = raw.trim().slice(0, 8000);
+    if (!message || chatting) return;
+    const { config, round, imported, loadContext, sheet, selectedArgument } = latest.current;
+    if (!config) {
+      setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
+      return;
+    }
+    let provider;
+    try {
+      provider = providerFor(config);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return;
+    }
+
+    const requestId = id();
+    const budget = config.contextTokens ?? 12_000;
+    const prior = round.agentMessages();
+    const history = compactHistory(prior, Math.floor(budget * 0.35));
+    const contextQuery = `${sheet} ${selectedArgument ?? ""} ${message}`;
+    const contextBudget = Math.floor(budget * 0.3);
+    const request: AgentChatRequest = {
+      id: requestId,
+      message,
+      selectedArgument,
+      sheet,
+      debate: debate(Math.floor(budget * 0.35)),
+      history,
+      context: selectContext(
+        imported,
+        contextQuery,
+        sheet,
+        Math.floor(budget * 0.3),
+      ),
+    };
+    const now = new Date().toISOString();
+    round.appendAgentMessage({ id: `${requestId}:user`, role: "user", content: message, createdAt: now });
+    const controller = new AbortController();
+    chatAbort.current?.abort();
+    chatAbort.current = controller;
+    chatRequest.current = requestId;
+    transcript.current.set(requestId, {
+      id: requestId,
+      startedAt: now,
+      finishedAt: now,
+      provider: provider.name,
+      router: config.router,
+      api: config.api,
+      model: config.model,
+      request,
+      response: "",
+      outcome: "generated",
+    });
+    setChatDraft("");
+    setChatting(true);
+    setError(null);
+
+    void (async () => {
+      let response = "";
+      try {
+        request.context = selectContext(
+          await loadContext(request.context),
+          contextQuery,
+          sheet,
+          contextBudget,
+        );
+        for await (const token of provider.chat(request, controller.signal)) {
+          response += token;
+          setChatDraft(response);
+        }
+        const content = response.trim();
+        if (!content) throw new Error("agent returned no reply");
+        round.appendAgentMessage({
+          id: `${requestId}:assistant`,
+          role: "assistant",
+          content,
+          createdAt: new Date().toISOString(),
+        });
+        const saved = transcript.current.get(requestId);
+        if (saved) saved.response = content;
+        finish(requestId, "generated");
+      } catch (cause) {
+        if (!controller.signal.aborted) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          setError(message);
+          finish(requestId, "error", message);
+        }
+      } finally {
+        if (chatAbort.current === controller) chatAbort.current = null;
+        if (chatRequest.current === requestId) chatRequest.current = null;
+        setChatDraft("");
+        setChatting(false);
+      }
+    })();
+  }, [chatting, debate, finish]);
+
+  const clearChat = useCallback(() => {
+    chatAbort.current?.abort();
+    if (chatRequest.current) finish(chatRequest.current, "cancelled");
+    chatAbort.current = null;
+    chatRequest.current = null;
+    setChatDraft("");
+    setChatting(false);
+    latest.current.round.clearAgentMessages();
+  }, [finish]);
+
+  // A loaded or joined round is a different debate. Work started against the
+  // old one must not arrive late and append itself to a document off screen.
+  useEffect(() => {
+    if (activeRound.current === ctx.round) return;
+    chatAbort.current?.abort();
+    if (chatRequest.current) finish(chatRequest.current, "cancelled");
+    for (const [requestId, controller] of abort.current) {
+      controller.abort();
+      finish(requestId, "cancelled");
+    }
+    abort.current.clear();
+    chatAbort.current = null;
+    chatRequest.current = null;
+    activeRound.current = ctx.round;
+    setDrafts([]);
+    setChatDraft("");
+    setChatting(false);
+  }, [ctx.round, finish]);
+
   useEffect(() => () => {
+    chatAbort.current?.abort();
+    if (chatRequest.current) finish(chatRequest.current, "cancelled");
     for (const controller of abort.current.values()) controller.abort();
     for (const draft of draftRef.current) finish(draft.requestId, "cancelled");
   }, [finish]);
 
-  return { drafts, generate, accept, dismiss, error };
+  return {
+    drafts,
+    generate,
+    accept,
+    dismiss,
+    messages: ctx.round.agentMessages(),
+    chatDraft,
+    chatting,
+    send,
+    clearChat,
+    importedCount: ctx.imported.length,
+    error,
+  };
 }
 
 /** A provider should return the requested JSON array; plain text stays useful

@@ -44,6 +44,22 @@ describe("agent config", () => {
       model: "old-model",
     });
   });
+
+  it("reads and validates context cost limits", () => {
+    const config = readConfig(JSON.stringify({
+      ai: {
+        provider: "local",
+        router: "http://localhost",
+        api: "openai-chat-completions",
+        model: "model",
+        contextTokens: 16000,
+        outputTokens: 900,
+      },
+    }));
+    expect(config.ai?.contextTokens).toBe(16000);
+    expect(config.ai?.outputTokens).toBe(900);
+    expect(config.problems).toEqual([]);
+  });
 });
 
 describe("key config", () => {

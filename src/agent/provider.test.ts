@@ -9,6 +9,9 @@ const request: AgentRequest = {
   argument: "nonunique",
   speech: 2,
   flow: [],
+  debate: [],
+  history: [{ id: "m", role: "user", content: "prioritize turns", createdAt: "now" }],
+  context: [{ source: "politics.cmir", position: "Politics", key: "uniqueness", argument: "uniqueness", answers: ["ahead"] }],
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -34,6 +37,7 @@ describe("OpenAI-compatible provider", () => {
       router: "http://agent.test/v1/chat/completions",
       api: "openai-chat-completions",
       model: "test",
+      outputTokens: 321,
     });
 
     const tokens: string[] = [];
@@ -43,8 +47,13 @@ describe("OpenAI-compatible provider", () => {
     expect(tokens).toEqual(["not ", "unique"]);
     const call = vi.mocked(fetch).mock.calls[0];
     const body = JSON.parse(String(call[1]?.body));
-    expect(body.messages[0].content).toContain("exactly three distinct");
-    expect(body.messages[0].content).toContain("45 words");
-    expect(body.messages[0].content).toContain("JSON array of three strings");
+    const prompt = body.messages.map((message: { content: string }) => message.content).join("\n");
+    expect(prompt).toContain("exactly three distinct");
+    expect(prompt).toContain("45 words");
+    expect(prompt).toContain("JSON array");
+    expect(body.messages[0].content).toContain("persistent strategy assistant");
+    expect(body.messages[1].content).toBe("prioritize turns");
+    expect(body.messages[2].content).toContain("politics.cmir");
+    expect(body.max_tokens).toBe(321);
   });
 });

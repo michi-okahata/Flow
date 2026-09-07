@@ -6,6 +6,7 @@ import {
   type Mark,
   type Support,
 } from "../model/types";
+import type { AgentMessage } from "../agent/types";
 
 /**
  * What a sheet looks like on disk, and how a round is built back out of a
@@ -70,6 +71,8 @@ export interface SheetJson {
    */
   order: number;
   arguments: ArgumentJson[];
+  /** Debate-wide chat, written only on the first sheet to avoid duplication. */
+  agent?: AgentMessage[];
 }
 
 /** A sheet's contents, as a round holds them. */
@@ -77,19 +80,21 @@ export interface SheetContents {
   title: string;
   order: number;
   roots: Argument[];
+  agentMessages?: AgentMessage[];
 }
 
 /**
  * Write a sheet out. Indented and newline-terminated because these files are
  * meant to be read and diffed — a flow on one line would be neither.
  */
-export function encodeSheet({ title, order, roots }: SheetContents): string {
+export function encodeSheet({ title, order, roots, agentMessages }: SheetContents): string {
   const sheet: SheetJson = {
     flow: FORMAT,
     title,
     order,
     arguments: roots.map(encodeArgument),
   };
+  if (order === 0 && agentMessages?.length) sheet.agent = agentMessages;
   return `${JSON.stringify(sheet, null, 2)}\n`;
 }
 
@@ -135,6 +140,7 @@ export function decodeSheet(text: string): SheetJson | null {
     title: typeof value.title === "string" ? value.title : "untitled",
     order: typeof value.order === "number" ? value.order : 0,
     arguments: decodeArguments(value.arguments),
+    ...(Array.isArray(value.agent) ? { agent: value.agent.filter(isAgentMessage) } : {}),
   };
 }
 
@@ -181,6 +187,8 @@ export function roundFrom(sheets: SheetJson[]): Round {
     // hundreds of commits, each one a render and an undo step.
     flow.batch(() => writeArguments(flow, null, sheet.arguments));
   }
+  const messages = sheets.find((sheet) => sheet.agent?.length)?.agent;
+  if (messages) round.replaceAgentMessages(messages);
   round.clearHistory();
   return round;
 }
@@ -237,4 +245,14 @@ function isMark(value: unknown): value is Mark {
 
 function isSupport(value: unknown): value is Support {
   return value === "card" || value === "analytic";
+}
+
+function isAgentMessage(value: unknown): value is AgentMessage {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    (value.role === "user" || value.role === "assistant") &&
+    typeof value.content === "string" &&
+    typeof value.createdAt === "string"
+  );
 }

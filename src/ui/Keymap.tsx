@@ -73,6 +73,7 @@ const GROUPS: Group[] = [
       { commands: ["answerNext"], does: "…and on to the next argument down" },
       { commands: ["recall"], does: "answer it with the block you memorized" },
       { commands: ["generate"], does: "draft three answers with the agent" },
+      { press: "⌘N", does: "open or close the debate agent" },
       { press: "Tab", does: "accept the agent's shadow answers" },
       { press: "Esc", does: "dismiss the agent's shadow answer" },
       { commands: ["recall"], count: "4", does: "…in the 4th speech instead" },

@@ -18,6 +18,8 @@ interface Section {
   position: string;
   argument: string;
   answers: string[];
+  /** Full card/analytic text aligned with answers, used only as agent context. */
+  context: string[];
 }
 
 interface CmirFile {
@@ -109,14 +111,18 @@ export function blocksOf(file: CmirFile): Imported[] {
       key,
       argument: section.argument.trim(),
       answers: [] as string[],
+      context: [] as string[],
     };
     if (!seen) {
       at.set(under(position, key), block);
       blocks.push(block);
     }
-    for (const answer of section.answers) {
+    for (const [index, answer] of section.answers.entries()) {
       const line = answer.trim();
-      if (line && !block.answers.includes(line)) block.answers.push(line);
+      if (line && !block.answers.includes(line)) {
+        block.answers.push(line);
+        block.context?.push(section.context[index]?.trim() || line);
+      }
     }
   }
 

@@ -138,6 +138,7 @@ export function useLibrary(round: Round, load: (round: Round) => void): Library 
           title: sheet.title,
           order,
           roots: current.flow(sheet.id).roots(),
+          agentMessages: order === 0 ? current.agentMessages() : undefined,
         });
         const kept = files.current.get(sheet.id);
         if (kept?.name === name && written.current.get(sheet.id) === text) continue;
@@ -257,7 +258,12 @@ export function useLibrary(round: Round, load: (round: Round) => void): Library 
         // formatted differently is not a change.
         saved.set(
           sheet.id,
-          encodeSheet({ title: sheet.title, order, roots: next.flow(sheet.id).roots() }),
+          encodeSheet({
+            title: sheet.title,
+            order,
+            roots: next.flow(sheet.id).roots(),
+            agentMessages: order === 0 ? next.agentMessages() : undefined,
+          }),
         );
       });
       bind(dir, held, saved);

@@ -40,6 +40,7 @@ import { useTextBuffer } from "./ui/useTextBuffer";
 import { DEFAULT_MARK, DEFAULT_SUPPORT, type Argument } from "./model/types";
 import { useAgent } from "./agent/useAgent";
 import { agentDraftRoots } from "./agent/draft";
+import { AgentPanel } from "./ui/AgentPanel";
 
 /**
  * The composition root: it owns the round and the editor state, derives what
@@ -71,8 +72,21 @@ function App() {
     actions,
   } = useSession(firstSheet);
   const [editor, setEditor] = useState(initialEditorState);
+  const [agentOpen, setAgentOpen] = useState(false);
   const { cursorId, editingId, column, count, focus, command, selectAnchor, sidebar, help, zoom, rewrites } =
     editor;
+
+  // The rail should disappear during a speech, not collapse into a permanent
+  // sliver. ⌘N is a window-level command so it also works from its composer.
+  useEffect(() => {
+    const toggleAgent = (event: KeyboardEvent) => {
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.key.toLowerCase() !== "n") return;
+      event.preventDefault();
+      setAgentOpen((open) => !open);
+    };
+    window.addEventListener("keydown", toggleAgent);
+    return () => window.removeEventListener("keydown", toggleAgent);
+  }, []);
 
   // Where the round is kept. Bound by `:open` or the first `:save`, and from
   // then on the flow is written out as it is taken down.
@@ -84,18 +98,23 @@ function App() {
   // ones this user actually has.
   const config = useConfig();
 
+  // What the user carries between rounds: the answers they've memorized to
+  // arguments, kept in ~/.flow. Nothing to do with the round's own folder
+  // above — see memory/store.ts.
+  const memory = useMemory();
+
   const agent = useAgent({
     config: config.ai,
     flow: roundFlow,
     roots: roundRoots,
     sheet: roundSheets.find((sheet) => sheet.id === roundSheet)?.title ?? "",
     speeches: SPEECHES.length,
+    round: roundDoc,
+    imported: memory.imported,
+    loadContext: memory.contextFor,
+    selectedArgument:
+      cursorId && roundFlow?.has(cursorId) ? roundFlow.textOf(cursorId) : undefined,
   });
-
-  // What the user carries between rounds: the answers they've memorized to
-  // arguments, kept in ~/.flow. Nothing to do with the round's own folder
-  // above — see memory/store.ts.
-  const memory = useMemory();
 
   // The position the memory sheet opens on — whichever sheet `M` was pressed
   // from, since that is the one you were thinking about.
@@ -529,6 +548,16 @@ function App() {
           drafts={editor.memory ? [] : agent.drafts}
         />
       </div>
+
+      {!editor.memory && agentOpen && (
+        <AgentPanel
+          open={agentOpen}
+          agent={agent}
+          onToggle={() => setAgentOpen((open) => !open)}
+          onImportFolder={memory.importFrom}
+          onImportFile={memory.importFile}
+        />
+      )}
 
       <StatusLine
         count={count}

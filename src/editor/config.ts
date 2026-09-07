@@ -130,12 +130,23 @@ function readAi(value: unknown, problems: string[]): AiConfig | null {
     problems.push(`config.json: "ai.apiKey" is not a string`);
     return null;
   }
+  for (const field of ["contextTokens", "outputTokens"] as const) {
+    if (value[field] !== undefined && (typeof value[field] !== "number" || !Number.isFinite(value[field]) || value[field] <= 0)) {
+      problems.push(`config.json: "ai.${field}" is not a positive number`);
+    }
+  }
   return {
     provider: value.provider,
     router: value.router,
     api: value.api,
     model: value.model,
     ...(typeof value.apiKey === "string" ? { apiKey: value.apiKey } : {}),
+    ...(typeof value.contextTokens === "number" && value.contextTokens > 0
+      ? { contextTokens: Math.floor(value.contextTokens) }
+      : {}),
+    ...(typeof value.outputTokens === "number" && value.outputTokens > 0
+      ? { outputTokens: Math.floor(value.outputTokens) }
+      : {}),
   };
 }
 
@@ -185,6 +196,8 @@ export function defaultConfigText(): string {
       router: "http://localhost:11434/v1/chat/completions",
       api: "openai-chat-completions",
       model: "qwen3:8b",
+      contextTokens: 12000,
+      outputTokens: 700,
     },
   }, null, 2)}\n`;
 }

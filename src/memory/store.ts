@@ -32,6 +32,8 @@ export interface Block {
   /** The argument as it was written when the block was memorized. */
   argument: string;
   answers: string[];
+  /** Full imported card text for agent retrieval; empty for memorized blocks. */
+  context?: string[];
 }
 
 /**
@@ -56,6 +58,15 @@ export async function readMemorized(): Promise<Block[]> {
 
 export async function readImported(): Promise<Block[]> {
   return invoke<Block[]>("store_imported");
+}
+
+/** Load full card bodies only after compact tags have selected a few blocks. */
+export async function readContext(blocks: Block[]): Promise<Block[]> {
+  if (blocks.length === 0) return [];
+  const context = await invoke<string[][]>("store_context", {
+    refs: blocks.map(({ source, position, key }) => ({ source, position, key })),
+  });
+  return blocks.map((block, index) => ({ ...block, context: context[index] ?? [] }));
 }
 
 /**

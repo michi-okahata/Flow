@@ -6,6 +6,7 @@ import {
   importOne,
   memorize,
   readImported,
+  readContext,
   readMemorized,
   type Block,
 } from "../memory/store";
@@ -32,6 +33,10 @@ import { folderName, pickDirectory, pickFile } from "../files/disk";
 export interface Memory {
   /** The ones you memorized — what the memory sheet shows and writes back. */
   memorized: Block[];
+  /** Imported CardMirror blocks available to the debate agent's retriever. */
+  imported: Block[];
+  /** Hydrate full evidence for a small set selected from imported tags. */
+  contextFor: (blocks: Block[]) => Promise<Block[]>;
   /**
    * What answers this argument in this position — see `recall`. The position is
    * a preference and not a filter.
@@ -228,6 +233,7 @@ export function useMemory(): Memory {
     (argument: string, position: string) => recallIn(argument, mine, theirs, position),
     [mine, theirs],
   );
+  const contextFor = useCallback((blocks: Block[]) => readContext(blocks), []);
 
   // One object, held between renders: the keymap takes this whole thing as part
   // of its context, and a fresh one every render would have it dropping and
@@ -237,6 +243,8 @@ export function useMemory(): Memory {
   return useMemo(
     () => ({
       memorized,
+      imported,
+      contextFor,
       recall,
       keep,
       importFrom: () => void importFrom(),
@@ -247,7 +255,7 @@ export function useMemory(): Memory {
       error,
       note,
     }),
-    [memorized, recall, keep, importFrom, importFile, forget, refresh, report, error, note],
+    [memorized, imported, contextFor, recall, keep, importFrom, importFile, forget, refresh, report, error, note],
   );
 }
 

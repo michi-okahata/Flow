@@ -66,6 +66,9 @@ pub struct Section {
     /// The tag of every card and the text of every analytic under it, in
     /// document order.
     pub answers: Vec<String>,
+    /// Full text of each card/analytic, aligned with `answers`. Flow recall
+    /// uses the short heads; the debate agent retrieves these richer entries.
+    pub context: Vec<String>,
 }
 
 /// One file's worth.
@@ -164,12 +167,13 @@ fn head(node: &Value) -> String {
 /// copied in with them cannot end the section — it is inside the wrapper rather
 /// than beside it, which is the same reason CardMirror's own section walk can't
 /// see it either.
-fn heads(node: &Value, depth: usize, answers: &mut Vec<String>) {
+fn heads(node: &Value, depth: usize, answers: &mut Vec<String>, context: &mut Vec<String>) {
     match kind(node) {
         "card" | "analytic_unit" => {
             let line = head(node);
             if !line.is_empty() {
                 answers.push(line);
+                context.push(text(node));
             }
         }
         _ => {
@@ -178,7 +182,7 @@ fn heads(node: &Value, depth: usize, answers: &mut Vec<String>) {
             }
             if let Some(children) = node["content"].as_array() {
                 for child in children {
-                    heads(child, depth + 1, answers);
+                    heads(child, depth + 1, answers, context);
                 }
             }
         }
@@ -221,13 +225,15 @@ fn sections_in(nodes: &[Value]) -> Vec<Section> {
                         position: if hat.is_empty() { pocket.clone() } else { hat.clone() },
                         argument,
                         answers: Vec::new(),
+                        context: Vec::new(),
                     });
                     Some(out.len() - 1)
                 };
             }
             _ => {
                 if let Some(at) = open {
-                    heads(node, 0, &mut out[at].answers);
+                    let section = &mut out[at];
+                    heads(node, 0, &mut section.answers, &mut section.context);
                 }
             }
         }
@@ -456,13 +462,14 @@ mod tests {
     }
 
     #[test]
-    fn the_evidence_itself_never_comes_across() {
+    fn the_evidence_is_retained_for_agent_context_but_not_flow_answers() {
         let read = sections(&file(vec![
             heading("block", "AT: No Link"),
             card("Link is overwhelming", "Nuclear war is coming and here is why."),
         ]))
         .unwrap();
         assert_eq!(read[0].answers, ["Link is overwhelming"]);
+        assert!(read[0].context[0].contains("Nuclear war is coming"));
     }
 
     #[test]
