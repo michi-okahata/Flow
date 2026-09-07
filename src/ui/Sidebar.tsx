@@ -138,7 +138,9 @@ export function Sidebar({
           return (
             <li
               key={sheet.id}
-              className={`app__sheet${sheet.id === activeSheet ? " is-active" : ""}${
+              className={`app__sheet${onMove ? " is-movable" : ""}${
+                sheet.id === activeSheet ? " is-active" : ""
+              }${
                 sheet.id === dragging ? " is-dragging" : ""
               }${line}`}
               onClick={() => onOpen(sheet.id)}

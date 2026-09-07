@@ -29,6 +29,10 @@
   background: none;
   font: inherit;
   color: inherit;
+  /* These fields sit inside containers with their own pointer affordances
+     (most notably a clickable, draggable sheet row). Name the I-beam here so
+     entering text never inherits a hand or grab cursor from that container. */
+  cursor: text;
 }
 
 /* A key, wherever one is written down: the empty sheet's two, the sidebar's

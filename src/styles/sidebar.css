@@ -95,6 +95,17 @@
   user-select: none;
 }
 
+/* Reorderable rows have two actions: click to open, drag to move. The grab
+   cursor is the extra affordance that distinguishes them from the read-only
+   memory rows, which only open and keep the ordinary pointer above. */
+.app__sheet.is-movable {
+  cursor: grab;
+}
+
+.app__sheet.is-movable.is-dragging {
+  cursor: grabbing;
+}
+
 .app__sheet:hover {
   background: var(--argument-hover);
 }
