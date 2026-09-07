@@ -322,11 +322,20 @@ export function FlowSheet({
   // itself a zero-length array, indistinguishable from "not measured yet".
   // `placed.length === 0` is decidable up front, without waiting on an
   // effect, so it skips the wait rather than hanging in it forever.
+  // Row tracks are `minmax(measured, auto)` rather than fixed pixels: typing
+  // grows the editing cell locally, and `remeasure` above only runs when
+  // `placed` (or the grid's width) changes — a keystroke that soft-wraps the
+  // text hits *between* measures. With a fixed track the taller cell
+  // overflows its row and paints over the argument below until the throttled
+  // write lands and the rows catch up; with `auto` as the max the track
+  // itself grows in the same paint, so the arguments below are pushed down
+  // instead of painted over. The measured height stays as the minimum, and
+  // the next measure adopts the new height as the baseline.
   const gridTemplateRows =
     placed.length === 0
       ? "auto 1fr"
       : rowHeights.length
-        ? ["auto", ...rowHeights.map((h) => `${h}px`), "1fr"].join(" ")
+        ? ["auto", ...rowHeights.map((h) => `minmax(${h}px, auto)`), "1fr"].join(" ")
         : undefined;
 
   return (
@@ -480,9 +489,9 @@ export function FlowSheet({
               {marker && <span className="flow-num">{marker}</span>}
               {draftIndex.has(p.id) ? (
                 <div className="flow-argument flow-argument--agent" aria-live="polite">
-                  {arg.text || (draft?.status === "error" ? draft.error : "thinking…")}
-                  {draft?.status === "ready" && draftIndex.get(p.id) === 0 && (
-                    <span className="flow-agent-hint">Tab ×{draft.answers.length}</span>
+                  {arg.text || (draftIndex.get(p.id)?.draft.status === "error" ? draftIndex.get(p.id)?.draft.error : "thinking…")}
+                  {draftIndex.get(p.id)?.draft.status === "ready" && draftIndex.get(p.id)?.index === 0 && (
+                    <span className="flow-agent-hint">Tab ×{draftIndex.get(p.id)?.draft.answers.length}</span>
                   )}
                 </div>
               ) : renderArgument ? renderArgument(arg) : <DefaultArgument text={arg.text} />}
@@ -518,22 +527,6 @@ export function FlowSheet({
       )}
     </div>
   );
-}
-
-function withDraft(roots: Argument[], draft: AgentDraft, ids: string[]): Argument[] {
-  const shadows: Argument[] = ids.map((id, index) => ({
-    id,
-    speech: draft.speech,
-    text: draft.status === "ready" ? draft.answers[index] ?? "" : "",
-    mark: "none",
-    support: "analytic",
-    children: [],
-  }));
-  const walk = (argument: Argument): Argument =>
-    argument.id === draft.sourceId
-      ? { ...argument, children: [...argument.children, ...shadows] }
-      : { ...argument, children: argument.children.map(walk) };
-  return roots.map(walk);
 }
 
 function DefaultArgument({ text }: { text: string }): React.ReactElement {

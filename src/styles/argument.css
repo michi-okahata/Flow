@@ -95,6 +95,21 @@
 .flow-argument--edit {
   position: absolute;
   inset: 0;
+  /* The three layers must wrap character-for-character, or the caret (drawn
+     by the textarea) lands somewhere other than where the ghost drew the
+     suggestion — which at a soft wrap reads as grey text piled on black.
+     The shared `flow-argument` class carries most of this, but a textarea
+     brings UA defaults a div doesn't (notably `line-height: normal` against
+     the sheet's 1.35), so the metrics that decide where lines break are
+     restated here rather than trusted to inheritance. */
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  line-height: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+  text-indent: 0;
+  text-transform: none;
 }
 
 .flow-editor__ghost {
@@ -110,7 +125,10 @@
 }
 
 .flow-editor__suggest {
-  color: var(--muted);
+  /* The quietest ink, deliberately: at a soft wrap the suggestion lands on
+     the next line where real spilled text would, and anything louder reads
+     as the argument itself rather than as something Tab might take. */
+  color: var(--placeholder);
 }
 
 /* Editing variant — same box, textarea resets only.
