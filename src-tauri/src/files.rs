@@ -66,7 +66,7 @@ pub async fn files_pick_directory(app: tauri::AppHandle) -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-/// Ask for one CardMirror file. `None` when the dialog was dismissed.
+/// Ask for one CardMirror or Word file. `None` when the dialog was dismissed.
 ///
 /// The filter is a courtesy, not a gate — every platform's dialog can be argued
 /// into naming another file, so what was picked is still checked for its
@@ -76,10 +76,35 @@ pub async fn files_pick_directory(app: tauri::AppHandle) -> Option<String> {
 pub async fn files_pick_file(app: tauri::AppHandle) -> Option<String> {
     app.dialog()
         .file()
-        .add_filter("CardMirror", &["cmir"])
+        .add_filter("Debate documents", &["cmir", "docx"])
         .blocking_pick_file()
         .and_then(|picked| picked.into_path().ok())
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Ask where to write a CardMirror speech. The writer receives the exact path;
+/// the dialog owns extension completion so the saved file opens normally in
+/// Finder and CardMirror.
+#[tauri::command]
+pub async fn files_pick_export(app: tauri::AppHandle, name: String) -> Option<String> {
+    app.dialog()
+        .file()
+        .add_filter("CardMirror document", &["cmir"])
+        .set_file_name(if name.to_lowercase().ends_with(".cmir") {
+            name
+        } else {
+            format!("{name}.cmir")
+        })
+        .blocking_save_file()
+        .and_then(|picked| picked.into_path().ok())
+        .map(|mut path| {
+            if path.extension().and_then(|ext| ext.to_str()).map(str::to_lowercase).as_deref()
+                != Some("cmir")
+            {
+                path.set_extension("cmir");
+            }
+            path.to_string_lossy().into_owned()
+        })
 }
 
 /// Every sheet file in `dir`, by name, sorted so a round opens the same way

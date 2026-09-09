@@ -3,7 +3,7 @@ import { argumentKey } from "./recall";
 import type { Imported, ImportedFile } from "./store";
 
 /**
- * A folder of CardMirror files, as blocks.
+ * A folder of CardMirror or Word files, as blocks.
  *
  * A `.cmir` is already a stack of arguments with answers under them — a block
  * heading, and the tag of every card cut under it — so a backfile needs no
@@ -20,6 +20,8 @@ interface Section {
   answers: string[];
   /** Full card/analytic text aligned with answers, used only as agent context. */
   context: string[];
+  /** Exact CardMirror nodes aligned with answers, retained for export. */
+  native: unknown[];
 }
 
 interface CmirFile {
@@ -49,13 +51,13 @@ export interface Scan {
   truncated: boolean;
 }
 
-/** Read every `.cmir` under `dir`. Nothing is written by this. */
+/** Read every `.cmir` and `.docx` under `dir`. Nothing is written by this. */
 export async function scan(dir: string): Promise<Scan> {
   return invoke<Scan>("cmir_read_dir", { dir });
 }
 
 /**
- * Read one `.cmir`, picked by itself. Nothing is written by this either, and
+ * Read one `.cmir` or `.docx`, picked by itself. Nothing is written by this either, and
  * unlike a folder — where one bad file in six hundred is a count on the status
  * line — a file that will not read is the whole answer, and comes back as the
  * error.
@@ -74,7 +76,7 @@ export async function scanFile(path: string): Promise<CmirFile> {
  */
 function stemOf(path: string): string {
   const name = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
-  return name.replace(/\.cmir$/i, "");
+  return name.replace(/\.(cmir|docx)$/i, "");
 }
 
 /**
@@ -112,6 +114,7 @@ export function blocksOf(file: CmirFile): Imported[] {
       argument: section.argument.trim(),
       answers: [] as string[],
       context: [] as string[],
+      native: [] as unknown[],
     };
     if (!seen) {
       at.set(under(position, key), block);
@@ -122,6 +125,7 @@ export function blocksOf(file: CmirFile): Imported[] {
       if (line && !block.answers.includes(line)) {
         block.answers.push(line);
         block.context?.push(section.context[index]?.trim() || line);
+        block.native?.push(section.native[index] ?? null);
       }
     }
   }

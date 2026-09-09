@@ -126,9 +126,11 @@ export type SessionCommand =
   | { kind: "open" }
   /** Write the round out — asking where, the first time. */
   | { kind: "save" }
-  /** Read a folder of CardMirror files in as blocks. */
+  /** Turn a prepared 1AC/1NC Word or CardMirror file into sheets. */
   | { kind: "import" }
-  /** Read one CardMirror file in as blocks. */
+  /** Write selected positions from one speech as a CardMirror document. */
+  | { kind: "export" }
+  /** Read one Word or CardMirror file into agent context. */
   | { kind: "read" }
   /** Drop everything a folder of files put there. */
   | { kind: "forget" }
@@ -187,14 +189,15 @@ export function parseSessionCommand(text: string): SessionCommand | null {
     case "save":
       return { kind: "save" };
 
-    // ---- what you carry between rounds. A folder of cut cards is already a
-    // folder of blocks (see memory/cmir.ts), so this is the same gesture as
-    // `:open` pointed at the other kind of file — and `:forget` is the way back
-    // out of one, which a command that reads thousands of blocks in needs.
+    // ---- prepared speeches. One Word or CardMirror file becomes a preview of
+    // positions before any sheets are created.
     case "import":
-      return { kind: "import" };
-    // One file rather than a folder: the one card file somebody handed over,
-    // or the one that changed since its backfile was read.
+      return argument ? null : { kind: "import" };
+    case "export":
+      return argument ? null : { kind: "export" };
+
+    // ---- what the agent can carry between rounds. The panel also exposes a
+    // folder picker; `:read` is the single-file command-line equivalent.
     case "read":
       return { kind: "read" };
     case "forget":

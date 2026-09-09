@@ -16,7 +16,10 @@ describe("parseSessionCommand", () => {
     expect(parseSessionCommand("delete")).toEqual({ kind: "delete" });
     expect(parseSessionCommand("save")).toEqual({ kind: "save" });
     expect(parseSessionCommand("import")).toEqual({ kind: "import" });
+    expect(parseSessionCommand("export")).toEqual({ kind: "export" });
     expect(parseSessionCommand("read")).toEqual({ kind: "read" });
+    expect(parseSessionCommand("speech")).toBeNull();
+    expect(parseSessionCommand("import speech")).toBeNull();
     expect(parseSessionCommand("forget")).toEqual({ kind: "forget" });
   });
 

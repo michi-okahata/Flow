@@ -35,4 +35,8 @@ base64 = "0.23.1"
 # A `.cmir` is a gzip-wrapped envelope — see `cmir.rs`. Pure Rust, so nothing
 # about reading one depends on which zlib the machine happens to have.
 flate2 = "1"
-
+# Word documents are OOXML zip archives. Only the XML parts are read; media is
+# deliberately left compressed because Flow needs tags and evidence text, not
+# embedded images.
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"

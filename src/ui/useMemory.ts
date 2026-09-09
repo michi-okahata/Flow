@@ -33,7 +33,7 @@ import { folderName, pickDirectory, pickFile } from "../files/disk";
 export interface Memory {
   /** The ones you memorized — what the memory sheet shows and writes back. */
   memorized: Block[];
-  /** Imported CardMirror blocks available to the debate agent's retriever. */
+  /** Imported CardMirror/Word blocks available to the debate agent's retriever. */
   imported: Block[];
   /** Hydrate full evidence for a small set selected from imported tags. */
   contextFor: (blocks: Block[]) => Promise<Block[]>;
@@ -49,12 +49,12 @@ export interface Memory {
    */
   keep: (position: string, argument: string, answers: string[]) => void;
   /**
-   * Read a folder of CardMirror files and file every block in it. Asks where.
+   * Read a folder of CardMirror or Word files and file every block in it. Asks where.
    * Replaces whatever was read out of that folder last time.
    */
   importFrom: () => void;
   /**
-   * Read one CardMirror file in as blocks. Asks which. Replaces whatever was
+   * Read one CardMirror or Word file in as blocks. Asks which. Replaces whatever was
    * read out of that file last time, and nothing else — so one file out of an
    * imported folder can be refreshed on its own, and a file picked by mistake
    * costs `:forget`-ing it alone rather than the folder it came with.

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tauri::Manager;
 
 /// `~/.flow`: what the *user* keeps, as against what a round does.
@@ -78,6 +79,7 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (source, position, key, ordinal)
      )",
     "ALTER TABLE answer ADD COLUMN context TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE answer ADD COLUMN native TEXT NOT NULL DEFAULT ''",
 ];
 
 /// An argument and the answers to it.
@@ -115,7 +117,30 @@ fn at(path: &Path) -> impl Fn(rusqlite::Error) -> String + '_ {
 /// crash between them leaves a file that is at one version or the other and
 /// never half-way between.
 fn migrate(db: &Connection) -> rusqlite::Result<()> {
-    steps_of(db, MIGRATIONS)
+    steps_of(db, MIGRATIONS)?;
+
+    // Development builds briefly used a different migration sequence. Those
+    // databases can carry a user_version newer than this list while still
+    // lacking columns introduced here, causing SQLite to skip the migrations.
+    // Reconcile by shape: adding a missing nullable/defaulted column preserves
+    // every existing block and is safe to run on every launch.
+    let columns = answer_columns(db)?;
+    if !columns.iter().any(|column| column == "context") {
+        db.execute_batch("ALTER TABLE answer ADD COLUMN context TEXT NOT NULL DEFAULT ''")?;
+    }
+    if !columns.iter().any(|column| column == "native") {
+        db.execute_batch("ALTER TABLE answer ADD COLUMN native TEXT NOT NULL DEFAULT ''")?;
+    }
+    db.pragma_update(None, "user_version", MIGRATIONS.len() as i64)?;
+    Ok(())
+}
+
+fn answer_columns(db: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut query = db.prepare("PRAGMA table_info(answer)")?;
+    let columns = query
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect();
+    columns
 }
 
 /// The runner, over whatever list it is given. Split from `migrate` so it can
@@ -417,6 +442,8 @@ pub struct Imported {
     pub answers: Vec<String>,
     #[serde(default)]
     pub context: Vec<String>,
+    #[serde(default)]
+    pub native: Vec<serde_json::Value>,
 }
 
 /// One file's worth of them.
@@ -496,8 +523,8 @@ fn import(db: &mut Connection, dir: &str, files: &[ImportedFile]) -> rusqlite::R
              VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))",
         )?;
         let mut add_answer = tx.prepare(
-            "INSERT INTO answer (source, position, key, ordinal, text, context)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO answer (source, position, key, ordinal, text, context, native)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for file in files {
             for block in &file.blocks {
@@ -518,6 +545,7 @@ fn import(db: &mut Connection, dir: &str, files: &[ImportedFile]) -> rusqlite::R
                         ordinal as i64,
                         answer,
                         block.context.get(ordinal).map(String::as_str).unwrap_or(answer),
+                        block.native.get(ordinal).map(serde_json::Value::to_string).unwrap_or_default(),
                     ])?;
                 }
             }
@@ -572,8 +600,8 @@ fn import_file(db: &mut Connection, file: &ImportedFile) -> rusqlite::Result<()>
          VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))",
     )?;
     let mut add_answer = tx.prepare(
-        "INSERT INTO answer (source, position, key, ordinal, text)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO answer (source, position, key, ordinal, text, context, native)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for block in &file.blocks {
         if block.key.is_empty() || block.answers.is_empty() {
@@ -592,6 +620,8 @@ fn import_file(db: &mut Connection, file: &ImportedFile) -> rusqlite::Result<()>
                 block.key,
                 ordinal as i64,
                 answer,
+                block.context.get(ordinal).map(String::as_str).unwrap_or(answer),
+                block.native.get(ordinal).map(serde_json::Value::to_string).unwrap_or_default(),
             ])?;
         }
     }
@@ -615,11 +645,158 @@ pub fn store_forget_imports(app: tauri::AppHandle) -> Result<(), String> {
     forget_imports(&mut open(&path)?).map_err(at(&path))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportLine {
+    pub text: String,
+    pub support: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportBlock {
+    pub parent: String,
+    pub key: String,
+    pub lines: Vec<ExportLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPosition {
+    pub title: String,
+    pub blocks: Vec<ExportBlock>,
+}
+
+fn normalized_answer(value: &str) -> String {
+    let value = value.trim();
+    let cut = value.find(char::is_whitespace).unwrap_or(value.len());
+    let first = &value[..cut];
+    let rest = &value[cut..];
+    let numbered = first
+        .trim_end_matches(['.', ')'])
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric())
+        && (first.ends_with('.') || first.ends_with(')'));
+    let value = if numbered { rest } else { value };
+    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+fn text_node(text: &str) -> Value {
+    json!({ "type": "text", "text": text })
+}
+
+fn heading(kind: &str, text: &str) -> Value {
+    let attrs = if kind == "block" {
+        json!({ "id": null, "indent": 0, "spacing": null, "numRestart": true })
+    } else {
+        json!({ "id": null, "indent": 0, "spacing": null })
+    };
+    json!({
+        "type": kind,
+        "attrs": attrs,
+        "content": [text_node(text)]
+    })
+}
+
+fn analytic(text: &str) -> Value {
+    json!({
+        "type": "analytic_unit",
+        "attrs": { "numRole": "none", "numRestart": false },
+        "content": [{ "type": "analytic", "content": [text_node(text)] }]
+    })
+}
+
+fn native_answer(
+    db: &Connection,
+    position: &str,
+    key: &str,
+    answer: &str,
+) -> rusqlite::Result<Option<Value>> {
+    let mut query = db.prepare(
+        "SELECT answer.text, answer.native FROM answer
+         WHERE answer.source <> '' AND answer.key = ?1
+         ORDER BY (answer.position = ?2) DESC, answer.source, answer.ordinal",
+    )?;
+    let rows = query.query_map([key, position], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let wanted = normalized_answer(answer);
+    for row in rows {
+        let (text, native) = row?;
+        if normalized_answer(&text) != wanted || native.is_empty() {
+            continue;
+        }
+        if let Ok(node) = serde_json::from_str::<Value>(&native) {
+            if matches!(node["type"].as_str(), Some("card" | "analytic_unit")) {
+                return Ok(Some(node));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn export_speech(
+    db: &Connection,
+    destination: &Path,
+    speech_label: &str,
+    positions: &[ExportPosition],
+) -> Result<(), String> {
+    let mut content = vec![heading("pocket", speech_label)];
+    for position in positions {
+        content.push(heading("hat", &position.title));
+        for block in &position.blocks {
+            content.push(heading("block", &block.parent));
+            for line in &block.lines {
+                let node = if line.support == "card" {
+                    native_answer(db, &position.title, &block.key, &line.text)
+                        .map_err(|e| format!("evidence database: {e}"))?
+                        .unwrap_or_else(|| analytic(&line.text))
+                } else {
+                    native_answer(db, &position.title, &block.key, &line.text)
+                        .map_err(|e| format!("evidence database: {e}"))?
+                        .filter(|node| node["type"] == "analytic_unit")
+                        .unwrap_or_else(|| analytic(&line.text))
+                };
+                content.push(node);
+            }
+        }
+    }
+    let envelope = json!({
+        "format": "cardmirror-doc",
+        "formatVersion": 1,
+        "createdBy": "Flow",
+        "createdAt": "",
+        "doc": { "type": "doc", "content": content }
+    });
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    serde_json::to_writer(&mut gzip, &envelope)
+        .map_err(|e| format!("{}: {e}", destination.display()))?;
+    let bytes = gzip
+        .finish()
+        .map_err(|e| format!("{}: {e}", destination.display()))?;
+    fs::write(destination, bytes).map_err(|e| format!("{}: {e}", destination.display()))
+}
+
+#[tauri::command]
+pub fn store_export_speech(
+    app: tauri::AppHandle,
+    destination: String,
+    speech_label: String,
+    positions: Vec<ExportPosition>,
+) -> Result<(), String> {
+    if positions.is_empty() {
+        return Err("no positions selected".into());
+    }
+    let db_path = path(&app)?;
+    export_speech(&open(&db_path)?, Path::new(&destination), &speech_label, &positions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        append_transcript, blocks, config_in, forget_imports, import, import_file, memorize, open,
-        read_config, rename_position, steps_of, store_in, write_config, Imported, ImportedFile,
+        answer_columns, append_transcript, blocks, config_in, export_speech, forget_imports,
+        import, import_file, memorize, migrate, open, read_config, rename_position, steps_of,
+        store_in, write_config, ExportBlock, ExportLine, ExportPosition, Imported, ImportedFile,
         MIGRATIONS,
     };
 
@@ -671,6 +848,7 @@ mod tests {
                     argument: (*key).into(),
                     answers: answers.iter().map(|a| (*a).to_string()).collect(),
                     context: Vec::new(),
+                    native: Vec::new(),
                 })
                 .collect(),
         }
@@ -1145,6 +1323,35 @@ mod tests {
         assert_eq!(rows(&db, "one"), 0);
     }
 
+    #[test]
+    fn repairs_a_divergent_newer_version_by_table_shape() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE block (
+                source TEXT NOT NULL, position TEXT NOT NULL, key TEXT NOT NULL,
+                argument TEXT NOT NULL, memorized_at INTEGER NOT NULL,
+                PRIMARY KEY (source, position, key));
+             CREATE TABLE answer (
+                source TEXT NOT NULL, position TEXT NOT NULL, key TEXT NOT NULL,
+                ordinal INTEGER NOT NULL, text TEXT NOT NULL,
+                PRIMARY KEY (source, position, key, ordinal));
+             INSERT INTO answer VALUES ('file.cmir', 'DA', 'link', 0, 'No link');
+             PRAGMA user_version = 4;",
+        )
+        .unwrap();
+
+        migrate(&db).unwrap();
+
+        let columns = answer_columns(&db).unwrap();
+        assert!(columns.iter().any(|column| column == "context"));
+        assert!(columns.iter().any(|column| column == "native"));
+        assert_eq!(version(&db) as usize, MIGRATIONS.len());
+        let answer: String = db
+            .query_row("SELECT text FROM answer", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(answer, "No link");
+    }
+
     fn version(db: &rusqlite::Connection) -> i64 {
         db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap()
     }
@@ -1171,6 +1378,50 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn export_restores_native_cards_and_writes_flowed_analytics() {
+        let mut db = scratch("export-native");
+        let native = serde_json::json!({
+            "type": "card",
+            "content": [
+                { "type": "tag", "content": [{ "type": "text", "text": "No link" }] },
+                { "type": "cite_paragraph", "content": [{ "type": "text", "text": "Smith 26" }] },
+                { "type": "card_body", "content": [{ "type": "text", "text": "Full evidence." }] }
+            ]
+        });
+        import_file(&mut db, &ImportedFile {
+            source: "/cards/politics.cmir".into(),
+            blocks: vec![Imported {
+                position: "Politics DA".into(),
+                key: "uniqueness".into(),
+                argument: "Uniqueness".into(),
+                answers: vec!["No link".into()],
+                context: vec!["No link Smith 26 Full evidence.".into()],
+                native: vec![native],
+            }],
+        }).unwrap();
+        let destination = std::env::temp_dir().join("flow-export-native.cmir");
+        let _ = std::fs::remove_file(&destination);
+        export_speech(&db, &destination, "2AC", &[ExportPosition {
+            title: "Politics DA".into(),
+            blocks: vec![ExportBlock {
+                parent: "AT: Uniqueness".into(),
+                key: "uniqueness".into(),
+                lines: vec![
+                    ExportLine { text: "No link".into(), support: "card".into() },
+                    ExportLine { text: "Their model double counts".into(), support: "analytic".into() },
+                ],
+            }],
+        }]).unwrap();
+
+        let sections = crate::cmir::sections(&std::fs::read(&destination).unwrap()).unwrap();
+        assert_eq!(sections[0].position, "Politics DA");
+        assert_eq!(sections[0].argument, "AT: Uniqueness");
+        assert_eq!(sections[0].answers, ["No link", "Their model double counts"]);
+        assert!(sections[0].context[0].contains("Smith 26"));
+        assert_eq!(sections[0].support, ["card", "analytic"]);
     }
 
 }

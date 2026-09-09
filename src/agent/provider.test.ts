@@ -57,3 +57,33 @@ describe("OpenAI-compatible provider", () => {
     expect(body.max_tokens).toBe(321);
   });
 });
+
+it("executes chat tools and returns their results to the model", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: null, tool_calls: [{ id: "tool-1", type: "function", function: { name: "list_positions", arguments: "{}" } }] } }] }))
+    .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Found Politics." } }] }));
+  vi.stubGlobal("fetch", fetchMock);
+  const provider = new OpenAICompatibleProvider({ provider: "test", router: "http://agent.test", api: "openai-chat-completions", model: "test" });
+  const execute = vi.fn().mockReturnValue([{ id: "position", title: "Politics" }]);
+  const tokens = [];
+  for await (const token of provider.chat({ ...request, message: "Explore the debate" }, new AbortController().signal, execute)) tokens.push(token);
+  expect(tokens).toEqual(["Found Politics."]);
+  expect(execute).toHaveBeenCalledWith("list_positions", {});
+  const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+  expect(body.tools).toHaveLength(4);
+  expect(body.messages.at(-1)).toEqual({ role: "tool", tool_call_id: "tool-1", content: JSON.stringify([{ id: "position", title: "Politics" }]) });
+});
+
+it("does not execute tools after cancellation", async () => {
+  const controller = new AbortController();
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+    controller.abort();
+    return Promise.resolve(Response.json({ choices: [{ message: { tool_calls: [{ id: "t", function: { name: "edit_argument", arguments: "{}" } }] } }] }));
+  }));
+  const provider = new OpenAICompatibleProvider({ provider: "test", router: "http://agent.test", api: "openai-chat-completions", model: "test" });
+  const execute = vi.fn();
+  await expect(async () => {
+    for await (const _ of provider.chat({ ...request, message: "Edit" }, controller.signal, execute)) { /* consume */ }
+  }).rejects.toThrow();
+  expect(execute).not.toHaveBeenCalled();
+});

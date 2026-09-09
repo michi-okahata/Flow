@@ -42,3 +42,17 @@ material. Older assistant prose is dropped first and older user directions are
 folded into a small strategy brief. Stable instructions and prior chat are kept
 at the front of each request to preserve as much provider KV-cache reuse as an
 OpenAI-compatible endpoint allows. `outputTokens` caps each generated reply.
+
+In the agent rail, **Position tree** lets you switch positions, search argument
+text, and expand response chains. Select an argument to locate it on the sheet,
+or choose **edit** to revise it and **Save argument** to commit the change.
+Edits refuse to overwrite text changed elsewhere while the editor was open.
+The **Strategy** tab keeps the debate-wide conversation and evidence imports.
+
+The strategy agent can also traverse and edit the debate itself using
+`list_positions`, `read_position`, `read_argument`, and `edit_argument`.
+For example: “Follow the responses on Politics and tighten the impact argument.”
+Edits save directly through the shared document and require the exact text read
+beforehand, preventing stale rewrites. Tool activity is retained in the run
+transcript. Chat requires a model/router supporting OpenAI-compatible function
+calling; tool-enabled chat returns its reply after the tool steps complete.

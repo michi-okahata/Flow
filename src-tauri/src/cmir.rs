@@ -24,6 +24,7 @@ use serde_json::Value;
 /// The extension, matched without regard to case — a `Politics.CMIR` skipped in
 /// silence is a block the user thinks they imported and hasn't.
 const EXTENSION: &str = "cmir";
+const DOCX_EXTENSION: &str = "docx";
 
 /// The most a single file may be, compressed and inflated. Far above anything
 /// real, and there for what a file can be *made* to do: gzip reaches a thousand
@@ -69,6 +70,13 @@ pub struct Section {
     /// Full text of each card/analytic, aligned with `answers`. Flow recall
     /// uses the short heads; the debate agent retrieves these richer entries.
     pub context: Vec<String>,
+    /// Native type aligned with `answers`: `card` or `analytic`. Existing
+    /// memory consumers may ignore it; speech import uses it to draw the flow.
+    pub support: Vec<String>,
+    /// Exact CardMirror nodes aligned with `answers`. Keeping these opaque is
+    /// what lets export restore marks, citations, tags, and card bodies without
+    /// making Flow understand CardMirror's whole document schema.
+    pub native: Vec<Value>,
 }
 
 /// One file's worth.
@@ -78,6 +86,34 @@ pub struct CmirFile {
     /// so re-reading a file replaces exactly its own blocks and no others.
     pub path: String,
     pub sections: Vec<Section>,
+}
+
+/// One flowed line from a prepared speech document. CardMirror has already
+/// done the difficult DOCX interpretation; at this boundary the native node
+/// type is the exact card/analytic distinction Flow needs to preserve.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechLine {
+    pub text: String,
+    pub support: String,
+}
+
+/// A Heading 3 in a speech document becomes one Flow sheet.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechPosition {
+    pub title: String,
+    pub lines: Vec<SpeechLine>,
+}
+
+/// Preview returned before anything is added to the round.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechDocument {
+    pub path: String,
+    pub speech: usize,
+    pub speech_label: String,
+    pub positions: Vec<SpeechPosition>,
 }
 
 /// What a directory turned out to hold.
@@ -167,13 +203,29 @@ fn head(node: &Value) -> String {
 /// copied in with them cannot end the section — it is inside the wrapper rather
 /// than beside it, which is the same reason CardMirror's own section walk can't
 /// see it either.
-fn heads(node: &Value, depth: usize, answers: &mut Vec<String>, context: &mut Vec<String>) {
+fn heads(
+    node: &Value,
+    depth: usize,
+    answers: &mut Vec<String>,
+    context: &mut Vec<String>,
+    support: &mut Vec<String>,
+    native: &mut Vec<Value>,
+) {
     match kind(node) {
         "card" | "analytic_unit" => {
             let line = head(node);
             if !line.is_empty() {
                 answers.push(line);
                 context.push(text(node));
+                support.push(
+                    if kind(node) == "card" {
+                        "card"
+                    } else {
+                        "analytic"
+                    }
+                    .into(),
+                );
+                native.push(node.clone());
             }
         }
         _ => {
@@ -182,11 +234,78 @@ fn heads(node: &Value, depth: usize, answers: &mut Vec<String>, context: &mut Ve
             }
             if let Some(children) = node["content"].as_array() {
                 for child in children {
-                    heads(child, depth + 1, answers, context);
+                    heads(child, depth + 1, answers, context, support, native);
                 }
             }
         }
     }
+}
+
+/// A speech Heading 3 ends in the column it belongs to. CardMirror preserves
+/// that suffix from Verbatim (`Politics---1NC`); removing only the terminal
+/// suffix keeps dashes that are genuinely part of the position name.
+fn speech_heading(value: &str) -> Option<(String, usize, &'static str)> {
+    let trimmed = value.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    for (label, speech) in [("1AC", 0), ("1NC", 1)] {
+        if upper.ends_with(label) {
+            let before = &trimmed[..trimmed.len() - label.len()];
+            let title = before
+                .trim_end_matches(|c: char| c == '-' || c == '–' || c == '—' || c.is_whitespace());
+            if !title.is_empty() {
+                return Some((title.to_string(), speech, label));
+            }
+        }
+    }
+    None
+}
+
+fn speech_document(sections: &[Section], path: String) -> Result<SpeechDocument, String> {
+    let mut speech: Option<(usize, &'static str)> = None;
+    let mut positions: Vec<SpeechPosition> = Vec::new();
+
+    for section in sections {
+        let Some((title, column, label)) = speech_heading(&section.argument) else {
+            continue;
+        };
+        if speech.is_some_and(|known| known.0 != column) {
+            return Err("speech document mixes 1AC and 1NC headings".into());
+        }
+        speech = Some((column, label));
+        let key = title.to_lowercase();
+        let at = positions.iter().position(|p| p.title.to_lowercase() == key);
+        let at = at.unwrap_or_else(|| {
+            positions.push(SpeechPosition {
+                title,
+                lines: Vec::new(),
+            });
+            positions.len() - 1
+        });
+        for (index, answer) in section.answers.iter().enumerate() {
+            positions[at].lines.push(SpeechLine {
+                text: answer.clone(),
+                support: section
+                    .support
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| "card".into()),
+            });
+        }
+    }
+
+    positions.retain(|position| !position.lines.is_empty());
+    let Some((speech, speech_label)) = speech else {
+        return Err("no 1AC or 1NC position headings found".into());
+    };
+    if positions.is_empty() {
+        return Err("speech document has no tagged cards or analytics".into());
+    }
+    Ok(SpeechDocument {
+        path,
+        speech,
+        speech_label: speech_label.into(),
+        positions,
+    })
 }
 
 /// Walk the document and gather one section per block heading.
@@ -226,6 +345,8 @@ fn sections_in(nodes: &[Value]) -> Vec<Section> {
                         argument,
                         answers: Vec::new(),
                         context: Vec::new(),
+                        support: Vec::new(),
+                        native: Vec::new(),
                     });
                     Some(out.len() - 1)
                 };
@@ -233,7 +354,14 @@ fn sections_in(nodes: &[Value]) -> Vec<Section> {
             _ => {
                 if let Some(at) = open {
                     let section = &mut out[at];
-                    heads(node, 0, &mut section.answers, &mut section.context);
+                    heads(
+                        node,
+                        0,
+                        &mut section.answers,
+                        &mut section.context,
+                        &mut section.support,
+                        &mut section.native,
+                    );
                 }
             }
         }
@@ -288,18 +416,28 @@ pub fn read_file(path: &Path) -> Result<CmirFile, String> {
     if !file.is_file() {
         return Err(format!("{}: not a file", file.display()));
     }
-    if !is_cmir(&file) {
-        return Err(format!("{}: not a CardMirror file", file.display()));
+    if !is_supported(&file) {
+        return Err(format!(
+            "{}: expected a .cmir or .docx file",
+            file.display()
+        ));
     }
     // Size before contents: the point of the cap is not to have read it.
-    let too_big = fs::metadata(&file).map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(true);
+    let too_big = fs::metadata(&file)
+        .map(|m| m.len() > MAX_FILE_BYTES)
+        .unwrap_or(true);
     if too_big {
         return Err(format!("{}: larger than this will read", file.display()));
     }
     let bytes = fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let parsed = if is_docx(&file) {
+        crate::docx::sections(&bytes)?
+    } else {
+        sections(&bytes)?
+    };
     Ok(CmirFile {
         path: file.to_string_lossy().into_owned(),
-        sections: sections(&bytes)?,
+        sections: parsed,
     })
 }
 
@@ -307,6 +445,13 @@ pub fn read_file(path: &Path) -> Result<CmirFile, String> {
 #[tauri::command]
 pub fn cmir_read_file(path: String) -> Result<CmirFile, String> {
     read_file(Path::new(&path))
+}
+
+/// Read a converted 1AC/1NC for previewing as a set of Flow sheets.
+#[tauri::command]
+pub fn cmir_read_speech(path: String) -> Result<SpeechDocument, String> {
+    let file = read_file(Path::new(&path))?;
+    speech_document(&file.sections, file.path)
 }
 
 /// Every `.cmir` under `dir`, sorted, so importing the same folder twice reads
@@ -341,7 +486,7 @@ fn scan(dir: &Path, depth: usize, out: &mut Vec<PathBuf>, cut: &mut bool) {
         let path = entry.path();
         if kind.is_dir() {
             scan(&path, depth + 1, out, cut);
-        } else if is_cmir(&path) {
+        } else if is_supported(&path) {
             out.push(path);
         }
     }
@@ -352,6 +497,16 @@ fn is_cmir(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case(EXTENSION))
+}
+
+fn is_docx(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(DOCX_EXTENSION))
+}
+
+fn is_supported(path: &Path) -> bool {
+    is_cmir(path) || is_docx(path)
 }
 
 /// Read every `.cmir` under `dir`.
@@ -378,7 +533,9 @@ pub fn cmir_read_dir(dir: String) -> Result<Scan, String> {
     let mut failed = 0;
     for path in paths {
         // Size before contents: the point of the cap is not to have read it.
-        let too_big = fs::metadata(&path).map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(true);
+        let too_big = fs::metadata(&path)
+            .map(|m| m.len() > MAX_FILE_BYTES)
+            .unwrap_or(true);
         if too_big {
             failed += 1;
             continue;
@@ -387,7 +544,12 @@ pub fn cmir_read_dir(dir: String) -> Result<Scan, String> {
             failed += 1;
             continue;
         };
-        match sections(&bytes) {
+        let parsed = if is_docx(&path) {
+            crate::docx::sections(&bytes)
+        } else {
+            sections(&bytes)
+        };
+        match parsed {
             Ok(sections) => files.push(CmirFile {
                 path: path.to_string_lossy().into_owned(),
                 sections,
@@ -405,7 +567,7 @@ pub fn cmir_read_dir(dir: String) -> Result<Scan, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cmir_read_dir, cmir_read_file, is_gzip, read_file, sections};
+    use super::{cmir_read_dir, cmir_read_file, is_gzip, read_file, sections, speech_document};
     use serde_json::json;
 
     /// A `.cmir`'s bytes, uncompressed — which the reader takes as readily as a
@@ -440,6 +602,40 @@ mod tests {
 
     fn analytic(text: &str) -> serde_json::Value {
         json!({ "type": "analytic_unit", "content": [heading("analytic", text)] })
+    }
+
+    #[test]
+    fn a_prepared_speech_becomes_positions_with_native_support_types() {
+        let nodes = vec![
+            heading("pocket", "Off"),
+            heading("hat", "OFF"),
+            heading("block", "Politics---1NC"),
+            card("Election close now", "The evidence, at length."),
+            analytic("Their evidence predates the link"),
+            heading("block", "States---1NC"),
+            card("States solve", "…"),
+        ];
+        let source = sections(&file(nodes)).unwrap();
+        let read = speech_document(&source, "/round/1NC.cmir".into()).unwrap();
+
+        assert_eq!(read.speech, 1);
+        assert_eq!(read.speech_label, "1NC");
+        assert_eq!(read.positions.len(), 2);
+        assert_eq!(read.positions[0].title, "Politics");
+        assert_eq!(read.positions[0].lines[0].support, "card");
+        assert_eq!(read.positions[0].lines[1].support, "analytic");
+    }
+
+    #[test]
+    fn a_speech_preview_rejects_mixed_sides() {
+        let nodes = vec![
+            heading("block", "Case---1AC"),
+            card("Aff card", "…"),
+            heading("block", "Politics---1NC"),
+            card("Neg card", "…"),
+        ];
+        let source = sections(&file(nodes)).unwrap();
+        assert!(speech_document(&source, "mixed.cmir".into()).is_err());
     }
 
     #[test]

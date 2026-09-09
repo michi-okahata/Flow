@@ -34,6 +34,8 @@ export interface Block {
   answers: string[];
   /** Full imported card text for agent retrieval; empty for memorized blocks. */
   context?: string[];
+  /** Opaque native CardMirror nodes, loaded on import and used by export. */
+  native?: unknown[];
 }
 
 /**

@@ -32,11 +32,15 @@ export async function pickDirectory(): Promise<string | null> {
   return (await invoke<string | null>("files_pick_directory")) ?? null;
 }
 
-/** Ask for one file, filtered to CardMirror's extension. Null when the dialog
-    was dismissed — the filter is a courtesy, and what came back is still the
-    reader's to refuse (see `cmir_read_file`). */
+/** Ask for one CardMirror or Word document. Null when the dialog was
+    dismissed — the filter is a courtesy, and the reader still validates it. */
 export async function pickFile(): Promise<string | null> {
   return (await invoke<string | null>("files_pick_file")) ?? null;
+}
+
+/** Ask where to save an exported CardMirror speech. */
+export async function pickExport(name: string): Promise<string | null> {
+  return (await invoke<string | null>("files_pick_export", { name })) ?? null;
 }
 
 /** Every sheet file in `directory`, read in one call — a round is a handful of

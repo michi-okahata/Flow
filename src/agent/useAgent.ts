@@ -6,7 +6,7 @@ import type { Block } from "../memory/store";
 import { compactDebate, compactHistory, selectContext } from "./context";
 import { providerFor } from "./provider";
 import { saveTranscript } from "./transcript";
-import { applyAgentToolCall } from "./tools";
+import { applyAgentToolCall, executeChatTool } from "./tools";
 import type {
   AiConfig,
   AgentChatRequest,
@@ -306,7 +306,14 @@ export function useAgent(ctx: AgentContext): AgentControls {
           sheet,
           contextBudget,
         );
-        for await (const token of provider.chat(request, controller.signal)) {
+        for await (const token of provider.chat(request, controller.signal, (name, args) => {
+          controller.signal.throwIfAborted();
+          if (latest.current.round !== round) throw new Error("The active debate changed");
+          const result = executeChatTool(round, name, args);
+          const saved = transcript.current.get(requestId);
+          if (saved) (saved.chatTools ??= []).push({ name, arguments: args, result });
+          return result;
+        })) {
           response += token;
           setChatDraft(response);
         }

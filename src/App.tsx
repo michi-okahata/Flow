@@ -41,6 +41,15 @@ import { DEFAULT_MARK, DEFAULT_SUPPORT, type Argument } from "./model/types";
 import { useAgent } from "./agent/useAgent";
 import { agentDraftRoots } from "./agent/draft";
 import { AgentPanel } from "./ui/AgentPanel";
+import { SpeechImportDialog } from "./ui/SpeechImportDialog";
+import { SpeechExportDialog } from "./ui/SpeechExportDialog";
+import { pickExport, pickFile } from "./files/disk";
+import { writeSpeech } from "./export/speech";
+import {
+  createSpeechFlows,
+  readSpeech,
+  type SpeechDocument,
+} from "./import/speech";
 
 /**
  * The composition root: it owns the round and the editor state, derives what
@@ -73,19 +82,23 @@ function App() {
   } = useSession(firstSheet);
   const [editor, setEditor] = useState(initialEditorState);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [speechImport, setSpeechImport] = useState<SpeechDocument | null>(null);
+  const [speechImportError, setSpeechImportError] = useState<string | null>(null);
+  const [speechExport, setSpeechExport] = useState<number | null>(null);
   const { cursorId, editingId, column, count, focus, command, selectAnchor, sidebar, help, zoom, rewrites } =
     editor;
 
   // The rail should disappear during a speech, not collapse into a permanent
-  // sliver. ⌘N is a window-level command so it also works from its composer.
+  // sliver. ⌘J is a window-level command so it also works from its composer.
   useEffect(() => {
     const toggleAgent = (event: KeyboardEvent) => {
-      if (!event.metaKey || event.ctrlKey || event.altKey || event.key.toLowerCase() !== "n") return;
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.key.toLowerCase() !== "j") return;
       event.preventDefault();
-      setAgentOpen((open) => !open);
+      event.stopPropagation();
+      if (!event.repeat) setAgentOpen((open) => !open);
     };
-    window.addEventListener("keydown", toggleAgent);
-    return () => window.removeEventListener("keydown", toggleAgent);
+    window.addEventListener("keydown", toggleAgent, true);
+    return () => window.removeEventListener("keydown", toggleAgent, true);
   }, []);
 
   // Where the round is kept. Bound by `:open` or the first `:save`, and from
@@ -457,8 +470,22 @@ function App() {
         library.save();
         break;
       case "import":
-        memory.importFrom();
+        setSpeechImportError(null);
+        pickFile()
+          .then((path) => (path ? readSpeech(path) : null))
+          .then((document) => {
+            if (document) setSpeechImport(document);
+          })
+          .catch((error) => setSpeechImportError(String(error)));
         break;
+      case "export": {
+        const initial = cursorId && roundFlow?.has(cursorId)
+          ? roundFlow.speechOf(cursorId)
+          : (column ?? focus ?? 0);
+        setSpeechImportError(null);
+        setSpeechExport(Math.max(0, Math.min(SPEECHES.length - 1, initial)));
+        break;
+      }
       case "read":
         memory.importFile();
         break;
@@ -469,7 +496,7 @@ function App() {
         config.seed();
         break;
     }
-  }, [actions, config, flow, placed, sheets, activeSheet, open, sheetControls, library, memory, sheetActions, speeches]);
+  }, [actions, config, flow, placed, sheets, activeSheet, open, sheetControls, library, memory, sheetActions, speeches, cursorId, roundFlow, column, focus]);
 
   const renderArgument = (arg: Argument) => {
     const editing = arg.id === editingId;
@@ -553,6 +580,22 @@ function App() {
         <AgentPanel
           open={agentOpen}
           agent={agent}
+          roots={roots}
+          speeches={speeches}
+          sheets={sheets}
+          activeSheet={activeSheet}
+          selected={cursorId}
+          onOpenSheet={(id) => { stopEditing(); open(id); }}
+          onSelect={(id) => {
+            stopEditing();
+            if (flow?.has(id)) setEditor(s => moveCursorTo(s, flow, id, placed));
+          }}
+          onSave={(id, before, text) => {
+            if (!flow?.has(id)) return "This argument was deleted. Copy your text before closing.";
+            if (flow.textOf(id) !== before) return "This argument changed elsewhere. Copy your text, cancel, and reopen to review the latest version.";
+            flow.setText(id, text);
+            return null;
+          }}
           onToggle={() => setAgentOpen((open) => !open)}
           onImportFolder={memory.importFrom}
           onImportFile={memory.importFile}
@@ -580,7 +623,7 @@ function App() {
         answers={recalled.block?.answers.length ?? 0}
         among={recalled.among}
         memory={editor.memory}
-        memoryError={agent.error ?? memory.error}
+        memoryError={speechImportError ?? agent.error ?? memory.error}
         memoryNote={memory.note}
         // What is wrong with ~/.flow/config.json, if anything. Nowhere else
         // would say: a key that silently does nothing is indistinguishable
@@ -607,6 +650,47 @@ function App() {
         <Keymap
           keys={config.keys}
           onClose={() => setEditor((s) => ({ ...s, help: false }))}
+        />
+      )}
+
+      {speechImport && (
+        <SpeechImportDialog
+          key={speechImport.path}
+          document={speechImport}
+          onCancel={() => setSpeechImport(null)}
+          onCreate={(selected) => {
+            const created = createSpeechFlows(roundDoc, speechImport, selected);
+            setSpeechImport(null);
+            if (created[0]) {
+              actions.openSheet(created[0]);
+              const firstArgument = roundDoc.flow(created[0]).roots()[0]?.id ?? null;
+              setEditor((state) => ({
+                ...openSheet(state, null, created[0]!),
+                memory: false,
+                cursorId: firstArgument,
+                column: firstArgument ? null : speechImport.speech,
+              }));
+            }
+          }}
+        />
+      )}
+
+      {speechExport !== null && (
+        <SpeechExportDialog
+          round={roundDoc}
+          sheets={roundSheets}
+          speeches={SPEECHES}
+          initialSpeech={speechExport}
+          onCancel={() => setSpeechExport(null)}
+          onExport={(speech, positions) => {
+            const label = SPEECHES[speech]?.label ?? "speech";
+            pickExport(label)
+              .then((destination) => destination
+                ? writeSpeech(destination, SPEECHES[speech]!, positions)
+                : null)
+              .then(() => setSpeechExport(null))
+              .catch((error) => setSpeechImportError(String(error)));
+          }}
         />
       )}
     </main>

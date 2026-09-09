@@ -63,7 +63,7 @@ export interface AgentChatRequest {
 export interface AgentProvider {
   readonly name: string;
   generate(request: AgentRequest, signal: AbortSignal): AsyncIterable<string>;
-  chat(request: AgentChatRequest, signal: AbortSignal): AsyncIterable<string>;
+  chat(request: AgentChatRequest, signal: AbortSignal, execute?: (name: string, args: Record<string, unknown>) => unknown): AsyncIterable<string>;
 }
 
 export type AddArgumentToolCall = {
@@ -100,6 +100,7 @@ export interface Transcript {
   request: AgentRequest | AgentChatRequest;
   response: string;
   outcome: "generated" | "accepted" | "dismissed" | "cancelled" | "error";
+  chatTools?: { name: string; arguments: Record<string, unknown>; result: unknown }[];
   toolCalls?: AgentToolCall[];
   toolResults?: { argumentId: string }[];
   error?: string;

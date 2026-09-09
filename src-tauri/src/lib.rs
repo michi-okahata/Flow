@@ -1,4 +1,5 @@
 pub mod cmir;
+pub mod docx;
 pub mod files;
 pub mod relay;
 pub mod store;
@@ -99,6 +100,7 @@ pub fn run() {
             relay_info,
             files::files_pick_directory,
             files::files_pick_file,
+            files::files_pick_export,
             files::files_read_dir,
             files::files_write,
             files::files_remove,
@@ -113,8 +115,10 @@ pub fn run() {
             store::store_import,
             store::store_import_file,
             store::store_forget_imports,
+            store::store_export_speech,
             cmir::cmir_read_dir,
             cmir::cmir_read_file,
+            cmir::cmir_read_speech,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
