@@ -252,9 +252,7 @@ fn speech_heading(value: &str) -> Option<(String, usize, &'static str)> {
             let before = &trimmed[..trimmed.len() - label.len()];
             let title = before
                 .trim_end_matches(|c: char| c == '-' || c == '–' || c == '—' || c.is_whitespace());
-            if !title.is_empty() {
-                return Some((title.to_string(), speech, label));
-            }
+            return Some((title.to_string(), speech, label));
         }
     }
     None
@@ -263,6 +261,7 @@ fn speech_heading(value: &str) -> Option<(String, usize, &'static str)> {
 fn speech_document(sections: &[Section], path: String) -> Result<SpeechDocument, String> {
     let mut speech: Option<(usize, &'static str)> = None;
     let mut positions: Vec<SpeechPosition> = Vec::new();
+    let mut unnamed = std::collections::HashMap::<String, usize>::new();
 
     for section in sections {
         let Some((title, column, label)) = speech_heading(&section.argument) else {
@@ -272,8 +271,31 @@ fn speech_document(sections: &[Section], path: String) -> Result<SpeechDocument,
             return Err("speech document mixes 1AC and 1NC headings".into());
         }
         speech = Some((column, label));
+        // Bare speech headings are separate positions, not duplicate names.
+        // Use the parent heading and an ordinal without guessing from card text.
+        let bare = title.is_empty();
+        let title = if bare {
+            let parent = section.position.trim();
+            let parent = if parent.is_empty() { label } else { parent };
+            let number = unnamed.entry(parent.to_lowercase()).or_default();
+            loop {
+                *number += 1;
+                let candidate = format!("{parent} {number}");
+                let reserved = sections.iter().any(|section| {
+                    speech_heading(&section.argument)
+                        .is_some_and(|(title, _, _)| title.eq_ignore_ascii_case(&candidate))
+                });
+                if !reserved {
+                    break candidate;
+                }
+            }
+        } else {
+            title
+        };
         let key = title.to_lowercase();
-        let at = positions.iter().position(|p| p.title.to_lowercase() == key);
+        let at = if bare { None } else {
+            positions.iter().position(|p| p.title.to_lowercase() == key)
+        };
         let at = at.unwrap_or_else(|| {
             positions.push(SpeechPosition {
                 title,
@@ -624,6 +646,35 @@ mod tests {
         assert_eq!(read.positions[0].title, "Politics");
         assert_eq!(read.positions[0].lines[0].support, "card");
         assert_eq!(read.positions[0].lines[1].support, "analytic");
+    }
+
+    #[test]
+    fn bare_speech_headings_remain_separate_positions() {
+        let source = sections(&file(vec![
+            heading("hat", "OFF"),
+            heading("block", "1NC"),
+            card("First position", "Evidence"),
+            heading("block", "1NC"),
+            analytic("Second position"),
+            heading("hat", "ON"),
+            heading("block", "Case---AT: Gulf---1NC"),
+            card("Case answer", "Evidence"),
+        ])).unwrap();
+        let read = speech_document(&source, "practice.cmir".into()).unwrap();
+        assert_eq!(read.positions.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(),
+            vec!["OFF 1", "OFF 2", "Case---AT: Gulf"]);
+        assert_eq!(read.positions[0].lines[0].text, "First position");
+        assert_eq!(read.positions[1].lines[0].support, "analytic");
+        assert_eq!(read.speech, 1);
+    }
+
+    #[test]
+    fn bare_speech_headings_still_reject_mixed_sides() {
+        let source = sections(&file(vec![
+            heading("block", "1AC"), card("Aff", "Evidence"),
+            heading("block", "1NC"), card("Neg", "Evidence"),
+        ])).unwrap();
+        assert!(speech_document(&source, "mixed.cmir".into()).is_err());
     }
 
     #[test]

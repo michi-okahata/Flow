@@ -1,4 +1,5 @@
 pub mod cmir;
+pub mod agent;
 pub mod docx;
 pub mod files;
 pub mod relay;
@@ -95,6 +96,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            agent::agent_cli_complete,
             relay_start,
             relay_stop,
             relay_info,

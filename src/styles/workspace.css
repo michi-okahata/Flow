@@ -1,0 +1,47 @@
+/* Keep workspace metrics on the same zoom scale as the flow and panel layout. */
+:root { --chrome: #f3f3f1; --surface: #fff; --sheet: #fdfdfc; --band-neg: #f3f4f3; --rule: #e3e3df; --muted: #777974; --placeholder: #92948e; }
+.app { --workspace-height: calc(40px * var(--zoom)); --status-height: calc(24px * var(--zoom)); padding-top: var(--workspace-height); height: 100dvh; box-sizing: border-box; }
+.workspace-bar { position: fixed; inset: 0 0 auto; height: var(--workspace-height); display: flex; align-items: center; justify-content: space-between; gap: calc(16px * var(--zoom)); padding: 0 calc(10px * var(--zoom)); background: var(--surface); border-bottom: calc(1px * var(--zoom)) solid var(--rule); z-index: 5; font-size: calc(13px * var(--zoom)); }
+.workspace-bar__identity, .workspace-bar__actions { display: flex; align-items: center; gap: calc(6px * var(--zoom)); min-width: 0; }
+.workspace-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-badge { font-size: calc(10px * var(--zoom)); border: calc(1px * var(--zoom)) solid var(--rule); border-radius: calc(5px * var(--zoom)); padding: calc(3px * var(--zoom)) calc(6px * var(--zoom)); color: var(--muted); white-space: nowrap; }
+.workspace-bar button, .flow-toolbar button { font: inherit; color: var(--muted); border: 0; background: transparent; border-radius: calc(6px * var(--zoom)); padding: calc(5px * var(--zoom)) calc(7px * var(--zoom)); cursor: pointer; white-space: nowrap; }
+.workspace-bar button:hover, .flow-toolbar button:hover { background: var(--chrome); color: var(--argument-fg); }
+.workspace-bar button.is-selected { background: var(--chrome); color: var(--argument-fg); }
+.workspace-bar kbd { font: calc(10px * var(--zoom)) var(--font-ui); margin-left: calc(12px * var(--zoom)); color: var(--muted); }
+button:focus-visible { outline: calc(2px * var(--zoom)) solid var(--accent); outline-offset: calc(2px * var(--zoom)); }
+.app__sidebar { background: var(--chrome); height: calc(100dvh - var(--workspace-height) - var(--status-height)); box-sizing: border-box; padding: calc(10px * var(--zoom)) calc(8px * var(--zoom)) calc(8px * var(--zoom)); font-size: calc(13px * var(--zoom)); }
+.sidebar-new { display: flex; align-items: center; gap: calc(8px * var(--zoom)); border: calc(1px * var(--zoom)) solid var(--rule); border-radius: calc(7px * var(--zoom)); padding: calc(6px * var(--zoom)) calc(8px * var(--zoom)); font: inherit; color: var(--argument-fg); background: var(--surface); cursor: pointer; margin-bottom: calc(12px * var(--zoom)); }
+.sidebar-new kbd { margin-left: auto; font-size: calc(10px * var(--zoom)); color: var(--muted); }
+.app__sidebar-head { background: transparent; border: 0; padding: 0 calc(6px * var(--zoom)) calc(6px * var(--zoom)); font: calc(11px * var(--zoom)) var(--font-ui); letter-spacing: 0; text-transform: capitalize; }
+.app__sidebar-label { margin: 0; }
+.app__sidebar-add { font-size: calc(18px * var(--zoom)); }
+.app__sheet { border: 0; padding: calc(3px * var(--zoom)) calc(7px * var(--zoom)); margin-bottom: calc(1px * var(--zoom)); gap: calc(7px * var(--zoom)); border-radius: calc(5px * var(--zoom)); }
+.app__sheet.is-active { background: var(--accent-soft); color: var(--argument-fg); }
+.sidebar-sheet-icon { font-size: calc(15px * var(--zoom)); color: var(--muted); }
+.sidebar-footer { margin-top: auto; padding: calc(8px * var(--zoom)) calc(5px * var(--zoom)) 0; color: var(--muted); font-size: calc(10px * var(--zoom)); }
+.sidebar-footer button { display: flex; justify-content: space-between; width: 100%; margin-top: 0; padding: calc(10px * var(--zoom)) 0 0; border: 0; border-top: calc(1px * var(--zoom)) solid var(--rule); background: transparent; color: var(--muted); cursor: pointer; font: calc(11px * var(--zoom)) var(--font-ui); }
+.app__flow { height: calc(100dvh - var(--workspace-height) - var(--status-height)); overflow: auto; overscroll-behavior: contain; }
+.flow-toolbar { position: sticky; top: 0; z-index: 3; height: calc(34px * var(--zoom)); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; padding: 0 calc(10px * var(--zoom)); border-bottom: calc(1px * var(--zoom)) solid var(--rule); font-size: calc(12px * var(--zoom)); background: var(--surface); }
+.flow-toolbar > div { display: flex; align-items: center; gap: calc(8px * var(--zoom)); }
+.flow-toolbar__dot { width: calc(6px * var(--zoom)); height: calc(6px * var(--zoom)); border-radius: 50%; background: #7c9485; }
+.flow-toolbar__meta { color: var(--muted); font-size: calc(10px * var(--zoom)); margin-left: calc(8px * var(--zoom)); }
+.flow-toolbar button { font-size: calc(11px * var(--zoom)); }
+.flow-grid { min-height: calc(100dvh - var(--workspace-height) - var(--status-height) - calc(34px * var(--zoom))); }
+.flow-header { top: calc(34px * var(--zoom)); padding-top: calc(6px * var(--zoom)); padding-bottom: calc(6px * var(--zoom)); font-size: calc(11px * var(--zoom)); color: var(--muted); letter-spacing: .04em; }
+.app__status { box-sizing: border-box; font-size: calc(10px * var(--zoom)); background: var(--surface); padding: 0 calc(12px * var(--zoom)); }
+.agent-panel { height: calc(100dvh - var(--workspace-height) - var(--status-height)); box-sizing: border-box; background: var(--surface); font-size: calc(13px * var(--zoom)); }
+.agent-panel.is-expanded { top: var(--workspace-height); }
+.agent-panel__head { padding: calc(10px * var(--zoom)) calc(12px * var(--zoom)); align-items: center; }
+.agent-panel__head strong { font: 600 calc(13px * var(--zoom)) var(--font-ui); }
+.agent-panel__head span { font: calc(10px * var(--zoom)) var(--font-ui); margin-top: calc(4px * var(--zoom)); }
+.agent-panel__context { padding: calc(8px * var(--zoom)) calc(12px * var(--zoom)); font: calc(10px * var(--zoom)) var(--font-ui); }
+.agent-panel__messages { padding: calc(12px * var(--zoom)); }
+.agent-welcome { margin: 0 auto; max-width: calc(420px * var(--zoom)); }
+.agent-suggestions { display: grid; gap: calc(5px * var(--zoom)); margin-top: 0; }
+.agent-suggestions button { border: calc(1px * var(--zoom)) solid var(--rule); border-radius: calc(8px * var(--zoom)); padding: calc(8px * var(--zoom)) calc(10px * var(--zoom)); text-align: left; display: flex; justify-content: space-between; font-size: calc(11px * var(--zoom)); }
+.agent-panel__composer { margin: calc(8px * var(--zoom)); padding: calc(10px * var(--zoom)); border: 0; border-radius: calc(12px * var(--zoom)); background: var(--sheet); box-shadow: 0 calc(3px * var(--zoom)) calc(14px * var(--zoom)) #00000012, 0 0 0 calc(1px * var(--zoom)) #00000008; }
+.agent-panel__composer textarea { background: transparent; border: 0; padding: calc(2px * var(--zoom)); font: calc(12px * var(--zoom))/1.6 var(--font-ui); }
+.agent-panel__composer button[type="submit"] { border-radius: calc(7px * var(--zoom)); padding: calc(7px * var(--zoom)) calc(14px * var(--zoom)); }
+@media (prefers-color-scheme: dark) { :root { --chrome: #202120; --surface: #191a19; --sheet: #191a19; --band-neg: #202220; --rule: #323430; --muted: #a0a39b; --placeholder: #797d74; } }
+@media (max-width: 720px) { .workspace-badge, .workspace-divider, .workspace-bar__actions > button:first-child, .flow-toolbar__meta { display: none; } .workspace-bar { padding: 0 calc(8px * var(--zoom)); gap: calc(6px * var(--zoom)); } .workspace-bar__identity, .workspace-bar__actions { gap: calc(4px * var(--zoom)); } .workspace-title { max-width: calc(100px * var(--zoom)); } .workspace-bar kbd { display: none; } .flow-toolbar { padding: 0 calc(8px * var(--zoom)); } }

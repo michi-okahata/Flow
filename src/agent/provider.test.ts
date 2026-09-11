@@ -70,7 +70,7 @@ it("executes chat tools and returns their results to the model", async () => {
   expect(tokens).toEqual(["Found Politics."]);
   expect(execute).toHaveBeenCalledWith("list_positions", {});
   const body = JSON.parse(fetchMock.mock.calls[1][1].body);
-  expect(body.tools).toHaveLength(4);
+  expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain("move_argument");
   expect(body.messages.at(-1)).toEqual({ role: "tool", tool_call_id: "tool-1", content: JSON.stringify([{ id: "position", title: "Politics" }]) });
 });
 

@@ -25,6 +25,7 @@ interface SidebarProps {
    * the same job one substrate over. See useMemoryRound.ts.
    */
   label: string;
+  onHelp: () => void;
   sheets: SheetInfo[];
   activeSheet: string | null;
   /** Everyone else, so each sheet can show who is on it. */
@@ -43,10 +44,12 @@ interface SidebarProps {
    * positions alphabetical, and there the rows simply don't drag.
    */
   onMove?: (sheetId: string, by: number) => void;
+  allowDeleteLast?: boolean;
 }
 
 export function Sidebar({
   label,
+  onHelp,
   sheets,
   activeSheet,
   peers,
@@ -55,6 +58,7 @@ export function Sidebar({
   onRename,
   onDelete,
   onMove,
+  allowDeleteLast = false,
 }: SidebarProps): React.ReactElement {
   // Which sheet is being renamed, if any. Renaming in place rather than in a
   // dialog: a sheet gets its real name a minute after it is made — "DA" becomes
@@ -111,6 +115,7 @@ export function Sidebar({
         drop();
       }}
     >
+      <button className="sidebar-new" onClick={onAdd}><span>＋</span> New {label === "positions" ? "position" : label === "threads" ? "thread" : "sheet"}{label !== "threads" && <kbd> :new </kbd>}</button>
       <div className="app__sidebar-head">
         <span className="app__sidebar-label">{label}</span>
         <button
@@ -182,6 +187,9 @@ export function Sidebar({
                   }}
                 />
               ) : (
+                <span className="sidebar-sheet-icon" aria-hidden="true">▤</span>
+              )}
+              {renaming !== sheet.id && (
                 <span className="app__sheet-name">{sheet.title || "untitled"}</span>
               )}
 
@@ -204,7 +212,7 @@ export function Sidebar({
               {/* Never the last sheet — a round with nowhere to put the next
                   argument isn't a state a click should be able to reach, so
                   the button that would leave the round there doesn't appear. */}
-              {sheets.length > 1 && (
+              {(allowDeleteLast || sheets.length > 1) && (
                 <button
                   type="button"
                   className="app__sheet-delete"
@@ -225,9 +233,10 @@ export function Sidebar({
 
       {sheets.length === 0 && (
         <p className="app__sheets-empty">
-          no sheets — <kbd>:new</kbd>
+          no {label} {label !== "threads" && <>— <kbd>:new</kbd></>}
         </p>
       )}
+      <div className="sidebar-footer"><button onClick={onHelp}><span>Keyboard shortcuts</span><kbd>?</kbd></button></div>
     </nav>
   );
 }

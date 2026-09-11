@@ -97,6 +97,19 @@ export function useKeymap(
   useEffect(() => {
     if (!flow) return;
 
+    // Zoom belongs to the window, including when a composer or rename field
+    // has focus. Capture it before those controls stop keyboard propagation.
+    const onZoom = (e: KeyboardEvent) => {
+      const key = keyOf(e);
+      if (!["zoomIn", "zoomOut", "zoomReset"].includes(keys[key])) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      stop();
+      setEditor(previous => run(key, {
+        state: previous, flow, round, placed, speeches, sheets, memory,
+      }, keys) ?? previous);
+    };
+
     const onKey = (e: KeyboardEvent) => {
       const key = keyOf(e);
       const tag = (e.target as HTMLElement).tagName;
@@ -184,10 +197,12 @@ export function useKeymap(
       if (held.current?.key === keyOf(e)) stop();
     };
 
+    window.addEventListener("keydown", onZoom, true);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", stop);
     return () => {
+      window.removeEventListener("keydown", onZoom, true);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", stop);

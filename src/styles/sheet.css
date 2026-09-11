@@ -7,8 +7,7 @@
      status line is exactly what `.app` reserves for the sheet. */
   min-height: calc(100vh - var(--status-height));
   /* No column gap: a speech's gutter is part of the speech (see --column-gap),
-     so the tracks sit flush and one track is one column, exactly. Row gap is
-     set inline — `measureRows` has to know it. */
+     so the tracks sit flush and one track is one column, exactly. Rows also meet flush; cell heights alone determine their spacing. */
   align-items: start;
 }
 
@@ -50,6 +49,16 @@
 .flow-band.is-neg,
 .flow-header.is-neg {
   background: var(--band-neg);
+}
+
+.flow-header.is-aff,
+.flow-cell.is-aff .flow-argument {
+  color: var(--aff-fg);
+}
+
+.flow-header.is-neg,
+.flow-cell.is-neg .flow-argument {
+  color: var(--neg-fg);
 }
 
 .flow-header {
@@ -127,18 +136,6 @@
   );
 }
 
-/* The cursor standing in a speech nobody has written in yet — no argument
-   under it, so nothing here but the box one would occupy. One line of the
-   sheet's own type high, and padded as an argument is, so the hole is exactly
-   argument-shaped: what it says is "the first argument of this speech goes
-   here". Everything that makes it read as the cursor is `is-cursor`'s, the
-   same three signals as anywhere else (see argument.css). */
-.flow-cell--vacant {
-  padding: var(--argument-pad);
-  padding-right: var(--column-gap);
-  min-height: calc(1em * var(--argument-line-height));
-}
-
 /* The thread: what the cursor's argument answers, back to the root, and what
    answers it (see `threadOf`). A flow says which argument answers which by
    putting them on one row, one column along — the whole grammar of the sheet,
@@ -211,51 +208,4 @@
   align-self: stretch;
   pointer-events: none;
   background: var(--accent-soft);
-}
-
-/* The number reads as the first thing in the argument rather than as a column
-   of its own: it takes the width of its digits and no more, and the text
-   starts a gutter after it. So it sits exactly where the first word would
-   have, and a two-digit number pushes the text along instead of overflowing a
-   box sized for one digit.
-   The text still hangs — the argument is the flex item beside this one, so a
-   wrapped line returns to the text, not under the number, which is what a
-   numbered list does. */
-.flow-num {
-  flex: none;
-  padding-left: var(--argument-gutter);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-}
-
-/* What to press on a sheet that has nothing on it yet. In the slot the first
-   argument will take, at the sheet's own size and its quietest ink — it is not
-   an empty state to be designed around, it is the one moment the flow has room
-   to say something, and it stops existing as soon as it is acted on. */
-.flow-empty {
-  margin: 0;
-  /* Lines up with the text of the argument that will replace it: the 1px the
-     cell's rule would take, plus the gutter its number keeps. */
-  padding-left: calc(1px + var(--argument-gutter));
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: calc(4px * var(--zoom));
-  color: var(--placeholder);
-  user-select: none;
-}
-
-.flow-empty dd {
-  margin: 0;
-}
-
-/* Where one argument ends and the next begins. Zero height so it can't
-   disturb the measured row tracks; centred in the row gap. */
-.flow-rule {
-  align-self: start;
-  height: 0;
-  margin-top: -1px;
-  border-top: 1px solid var(--rule);
-  pointer-events: none;
-  z-index: 1;
 }

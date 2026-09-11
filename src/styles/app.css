@@ -7,26 +7,10 @@ body {
   margin: 0;
 }
 
-/* The sheet moves when the cursor moves, and at no other time.
-
-   `overflow: hidden` is the whole of that: a hidden overflow is still a
-   scrolling box, so `scrollIntoView` (FlowSheet.tsx) goes on scrolling the
-   flow exactly as it did, and a trackpad no longer can. It is worth saying
-   as a rule rather than left to habit because of where a flow is typed —
-   both hands on the keys, on a laptop, which puts a palm a centimetre from a
-   surface that scrolls. The cost of a stray inch of scroll is not cosmetic:
-   the cursor is the only thing on the sheet that says which argument you are
-   writing, and there is no key that means "back to where I was" — the sheet
-   comes back only on the next keystroke that moves the cursor, i.e. after
-   you have already typed a line into a column you cannot see.
-
-   Anything with its own scrollbar — the sidebar's list, the keymap — is
-   untouched by this: they are their own scrolling boxes and are read rather
-   than written in, so the trackpad is the right way to move them. */
+/* Scrolling belongs to the flow pane so the workspace chrome stays put. */
 html {
   overflow: hidden;
-  /* There is nothing left to scroll, but macOS bounces the page against the
-     window edge regardless, which is the same drift by another name. */
+  /* Keep overscroll inside the workspace. */
   overscroll-behavior: none;
 }
 
@@ -101,4 +85,28 @@ html {
 .app__flow {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* No room left to draw a flow in.
+
+   Every speech column is `minmax(0, 1fr)`, so a flow between a wide agent
+   panel and the sheet list does not stop at cramped — it goes on shrinking
+   until seven columns share a hundred pixels and none of them holds a word.
+   Below that floor (layout/panels.ts) the sheet stops pretending: it steps
+   out, and the agent takes the width back rather than leaving a gap where the
+   flow was.
+
+   `display: none` rather than a zero width, because a grid that is still laid
+   out is still measured — FlowSheet observes its own cells to size the rows —
+   and measuring a sliver would leave every row wrong when the flow comes
+   back. */
+.app--no-flow .app__flow {
+  display: none;
+}
+
+/* Grows and shrinks with the window while the flow is out, so the width stays
+   exact through a resize without the drag's own value having to be rewritten
+   every time the window moves. */
+.app--no-flow .agent-panel {
+  flex: 1 1 auto;
 }

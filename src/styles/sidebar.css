@@ -9,7 +9,9 @@
 
 .app__sidebar {
   flex: none;
-  width: calc(112px * var(--zoom));
+  /* Set by App from the same constant the layout arithmetic uses — see
+     layout/panels.ts. Two numbers that had to agree would eventually not. */
+  width: var(--sidebar-width);
   /* Stays put while the flow scrolls under it — a round can be a very long
      page, and the list of positions is the thing you never want to scroll
      back up to find. */
@@ -123,15 +125,32 @@
   opacity: 0.4;
 }
 
-/* Where it would land, drawn in the gap the pointer is over. The cursor's own
-   colour, because it is the same statement the sheet makes about an argument:
-   this is the place in the list you have picked out. */
-.app__sheet.is-drop-before {
-  box-shadow: inset 0 calc(1px * var(--zoom)) 0 var(--cursor);
+/* A drag marks the insertion point with a line between rows. Keep the target
+   row clear so the line cannot be mistaken for another selected position. */
+.app__sheet.is-drop-before,
+.app__sheet.is-drop-after {
+  position: relative;
+  background: transparent;
+  box-shadow: none;
 }
 
-.app__sheet.is-drop-after {
-  box-shadow: inset 0 calc(-1px * var(--zoom)) 0 var(--cursor);
+.app__sheet.is-drop-before::before,
+.app__sheet.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--cursor);
+  pointer-events: none;
+}
+
+.app__sheet.is-drop-before::before {
+  top: -1px;
+}
+
+.app__sheet.is-drop-after::after {
+  bottom: -1px;
 }
 
 /* Long position names are the norm — "Politics DA — Midterms" — and the list

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Flow } from "../model/flow";
 import type { Round } from "../model/round";
 import type { Argument } from "../model/types";
@@ -13,6 +13,7 @@ import type {
   AgentDraft,
   AgentMessage,
   AgentRequest,
+  AgentStep,
   DebateSheet,
   Transcript,
 } from "./types";
@@ -29,38 +30,122 @@ interface AgentContext {
   selectedArgument?: string;
 }
 
+/**
+ * A thread as the panel draws it: what the document remembers, with whatever
+ * is happening right now folded in on top. The panel never has to join those
+ * two halves itself, and so cannot draw a thread as idle while it is running.
+ */
+export interface AgentThreadView {
+  id: string;
+  title: string;
+  createdAt: string;
+  messages: AgentMessage[];
+  running: boolean;
+  /** Reply text as it streams. Empty between turns. */
+  draft: string;
+  /** Tool calls made on the turn now running, in order. */
+  steps: AgentStep[];
+}
+
 export interface AgentControls {
   drafts: AgentDraft[];
   generate: (argumentIds: string[]) => void;
   accept: (requestId?: string) => string | null;
   dismiss: (requestId?: string) => void;
-  messages: AgentMessage[];
-  chatDraft: string;
-  chatting: boolean;
+  /** Every thread on the round, oldest first, with live state folded in. */
+  threads: AgentThreadView[];
+  /** The one on screen. Null means an unstarted thread: the composer is empty
+      and nothing has been written to the document yet. */
+  thread: AgentThreadView | null;
+  activeThread: string | null;
+  selectThread: (threadId: string | null) => void;
+  renameThread: (threadId: string, title: string) => void;
+  deleteThread: (threadId: string) => void;
   send: (message: string) => void;
-  clearChat: () => void;
+  /** Interrupt a turn. Defaults to the active thread. */
+  stop: (threadId?: string) => void;
+  /** Empty a thread without deleting it. Defaults to the active thread. */
+  clearThread: (threadId?: string) => void;
+  /** True while any thread is working — threads run side by side. */
+  running: boolean;
   importedCount: number;
   error: string | null;
+}
+
+/** What is on the wire for one thread, until it lands in the document. */
+interface Run {
+  requestId: string;
+  draft: string;
+  steps: AgentStep[];
 }
 
 function id(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
+/** A thread is named after the question that started it, until it is renamed. */
+function titleFor(message: string): string {
+  const line = message.trim().split("\n")[0]?.trim() ?? "";
+  if (!line) return "New thread";
+  return line.length > 48 ? `${line.slice(0, 47)}…` : line;
+}
+
+/** One line of what a tool returned, for the step list. The full result is in
+    the transcript; this is the part you read while it runs. */
+function summarize(result: unknown): string {
+  if (result === undefined || result === null) return "";
+  const text = typeof result === "string" ? result : JSON.stringify(result);
+  return text.length > 120 ? `${text.slice(0, 119)}…` : text;
+}
+
 export function useAgent(ctx: AgentContext): AgentControls {
   const [drafts, setDrafts] = useState<AgentDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [chatDraft, setChatDraft] = useState("");
-  const [chatting, setChatting] = useState(false);
+  // Keyed by thread: two threads run at once, and neither may overwrite the
+  // other's streaming reply.
+  const [runs, setRuns] = useState<Record<string, Run>>({});
+  const [activeThread, setActiveThread] = useState<string | null>(null);
   const abort = useRef(new Map<string, AbortController>());
+  const chatAbort = useRef(new Map<string, AbortController>());
   const transcript = useRef(new Map<string, Transcript>());
   const latest = useRef(ctx);
   const draftRef = useRef(drafts);
-  const chatAbort = useRef<AbortController | null>(null);
-  const chatRequest = useRef<string | null>(null);
+  const runRef = useRef(runs);
   const activeRound = useRef(ctx.round);
   latest.current = ctx;
   draftRef.current = drafts;
+  runRef.current = runs;
+
+  const threads = useMemo<AgentThreadView[]>(
+    () => ctx.round.agentThreads().map((thread) => {
+      const run = runs[thread.id];
+      return {
+        ...thread,
+        messages: ctx.round.agentMessages(thread.id),
+        running: run !== undefined,
+        draft: run?.draft ?? "",
+        steps: run?.steps ?? [],
+      };
+    }),
+    // `ctx.round` is one object for the life of a document and its messages
+    // change underneath it, so the dependency that matters is the document's
+    // own version rather than anything React can compare. The render that
+    // re-reads it is driven by the session's subscription, which fires on
+    // every commit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runs, ctx.round, ctx.round.version()],
+  );
+
+  // A thread that was open when it was deleted — by this peer or another —
+  // stops being the answer to "which one is showing".
+  const shownThread = activeThread && threads.some((thread) => thread.id === activeThread)
+    ? activeThread
+    : null;
+  const thread = threads.find((entry) => entry.id === shownThread) ?? null;
+  // Read inside callbacks that outlive this render — a reply landing two
+  // minutes later must go to the thread it was sent from, not this closure's.
+  const activeThreadRef = useRef(shownThread);
+  activeThreadRef.current = shownThread;
 
   const debate = useCallback((budget: number): DebateSheet[] => {
     const { round } = latest.current;
@@ -68,6 +153,16 @@ export function useAgent(ctx: AgentContext): AgentControls {
       round.sheets().map((sheet) => ({ title: sheet.title, arguments: round.flow(sheet.id).roots() })),
       budget,
     );
+  }, []);
+
+  /** The standing direction a draft is written under: the open thread's own
+      conversation, so switching threads switches what the agent is told. */
+  const threadHistory = useCallback((budget: number): AgentMessage[] => {
+    const { round } = latest.current;
+    const open = activeThreadRef.current;
+    return open && round.hasAgentThread(open)
+      ? compactHistory(round.agentMessages(open), budget)
+      : [];
   }, []);
 
   const finish = useCallback((requestId: string, outcome: Transcript["outcome"], message?: string) => {
@@ -95,7 +190,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
   }, [finish]);
 
   const generateOne = useCallback((argumentId: string) => {
-    const { config, flow, roots, sheet, speeches, round, imported, loadContext } = latest.current;
+    const { config, flow, roots, sheet, speeches, imported, loadContext } = latest.current;
     if (!config) {
       setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
       return;
@@ -108,7 +203,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
     }
 
     const budget = config.contextTokens ?? 12_000;
-    const history = compactHistory(round.agentMessages(), Math.floor(budget * 0.35));
+    const history = threadHistory(Math.floor(budget * 0.35));
     const contextQuery =
       `${sheet} ${flow.textOf(argumentId)} ${history.filter((m) => m.role === "user").map((m) => m.content).join(" ")}`;
     const contextBudget = Math.floor(budget * 0.3);
@@ -204,7 +299,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
         finish(request.id, "error", message);
       }
     })();
-  }, [debate, finish]);
+  }, [debate, finish, threadHistory]);
 
   const generate = useCallback((argumentIds: string[]) => {
     for (const argumentId of new Set(argumentIds)) generateOne(argumentId);
@@ -239,9 +334,41 @@ export function useAgent(ctx: AgentContext): AgentControls {
     }
   }, [finish]);
 
+  /* ---- threads ---------------------------------------------------------- */
+
+  const selectThread = useCallback((threadId: string | null) => {
+    setActiveThread(threadId);
+    setError(null);
+  }, []);
+
+  const renameThread = useCallback((threadId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    latest.current.round.renameAgentThread(threadId, trimmed.slice(0, 200));
+  }, []);
+
+  const stop = useCallback((threadId?: string) => {
+    const target = threadId ?? activeThreadRef.current;
+    if (!target) return;
+    chatAbort.current.get(target)?.abort();
+  }, []);
+
+  const deleteThread = useCallback((threadId: string) => {
+    chatAbort.current.get(threadId)?.abort();
+    latest.current.round.removeAgentThread(threadId);
+    setActiveThread((current) => (current === threadId ? null : current));
+  }, []);
+
+  const clearThread = useCallback((threadId?: string) => {
+    const target = threadId ?? activeThreadRef.current;
+    if (!target) return;
+    chatAbort.current.get(target)?.abort();
+    latest.current.round.clearAgentMessages(target);
+  }, []);
+
   const send = useCallback((raw: string) => {
     const message = raw.trim().slice(0, 8000);
-    if (!message || chatting) return;
+    if (!message) return;
     const { config, round, imported, loadContext, sheet, selectedArgument } = latest.current;
     if (!config) {
       setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
@@ -255,10 +382,22 @@ export function useAgent(ctx: AgentContext): AgentControls {
       return;
     }
 
+    // The thread is written on the first message rather than when the panel
+    // opens: a thread nobody said anything in is not a thread, and every peer
+    // in the room would see it appear.
+    const open = activeThreadRef.current;
+    const threadId = open && round.hasAgentThread(open) ? open : round.addAgentThread(titleFor(message));
+    if (threadId !== open) {
+      setActiveThread(threadId);
+      activeThreadRef.current = threadId;
+    }
+    // One turn at a time within a thread; the next message would be answering
+    // a conversation the running turn has not finished writing.
+    if (chatAbort.current.has(threadId)) return;
+
     const requestId = id();
     const budget = config.contextTokens ?? 12_000;
-    const prior = round.agentMessages();
-    const history = compactHistory(prior, Math.floor(budget * 0.35));
+    const history = compactHistory(round.agentMessages(threadId), Math.floor(budget * 0.35));
     const contextQuery = `${sheet} ${selectedArgument ?? ""} ${message}`;
     const contextBudget = Math.floor(budget * 0.3);
     const request: AgentChatRequest = {
@@ -272,15 +411,13 @@ export function useAgent(ctx: AgentContext): AgentControls {
         imported,
         contextQuery,
         sheet,
-        Math.floor(budget * 0.3),
+        contextBudget,
       ),
     };
     const now = new Date().toISOString();
-    round.appendAgentMessage({ id: `${requestId}:user`, role: "user", content: message, createdAt: now });
+    round.appendAgentMessage(threadId, { id: `${requestId}:user`, role: "user", content: message, createdAt: now });
     const controller = new AbortController();
-    chatAbort.current?.abort();
-    chatAbort.current = controller;
-    chatRequest.current = requestId;
+    chatAbort.current.set(threadId, controller);
     transcript.current.set(requestId, {
       id: requestId,
       startedAt: now,
@@ -293,12 +430,26 @@ export function useAgent(ctx: AgentContext): AgentControls {
       response: "",
       outcome: "generated",
     });
-    setChatDraft("");
-    setChatting(true);
+    setRuns((current) => ({ ...current, [threadId]: { requestId, draft: "", steps: [] } }));
     setError(null);
+
+    /** Record a step against this thread's run, by id. */
+    const patchStep = (stepId: string, change: Partial<AgentStep>) =>
+      setRuns((current) => {
+        const run = current[threadId];
+        if (!run) return current;
+        return {
+          ...current,
+          [threadId]: {
+            ...run,
+            steps: run.steps.map((step) => (step.id === stepId ? { ...step, ...change } : step)),
+          },
+        };
+      });
 
     void (async () => {
       let response = "";
+      const steps: AgentStep[] = [];
       try {
         request.context = selectContext(
           await loadContext(request.context),
@@ -309,72 +460,107 @@ export function useAgent(ctx: AgentContext): AgentControls {
         for await (const token of provider.chat(request, controller.signal, (name, args) => {
           controller.signal.throwIfAborted();
           if (latest.current.round !== round) throw new Error("The active debate changed");
-          const result = executeChatTool(round, name, args);
-          const saved = transcript.current.get(requestId);
-          if (saved) (saved.chatTools ??= []).push({ name, arguments: args, result });
-          return result;
+          const stepId = id();
+          const step: AgentStep = {
+            id: stepId,
+            name,
+            arguments: args,
+            status: "running",
+            startedAt: new Date().toISOString(),
+          };
+          steps.push(step);
+          setRuns((current) => {
+            const run = current[threadId];
+            return run ? { ...current, [threadId]: { ...run, steps: [...run.steps, step] } } : current;
+          });
+          try {
+            const result = executeChatTool(round, name, args);
+            const done = { status: "done" as const, detail: summarize(result), finishedAt: new Date().toISOString() };
+            Object.assign(step, done);
+            patchStep(stepId, done);
+            const saved = transcript.current.get(requestId);
+            if (saved) (saved.chatTools ??= []).push({ name, arguments: args, result });
+            return result;
+          } catch (cause) {
+            const detail = cause instanceof Error ? cause.message : String(cause);
+            const failed = { status: "error" as const, detail, finishedAt: new Date().toISOString() };
+            Object.assign(step, failed);
+            patchStep(stepId, failed);
+            throw cause;
+          }
         })) {
           response += token;
-          setChatDraft(response);
+          setRuns((current) => {
+            const run = current[threadId];
+            return run ? { ...current, [threadId]: { ...run, draft: response } } : current;
+          });
         }
         const content = response.trim();
         if (!content) throw new Error("agent returned no reply");
-        round.appendAgentMessage({
+        round.appendAgentMessage(threadId, {
           id: `${requestId}:assistant`,
           role: "assistant",
           content,
           createdAt: new Date().toISOString(),
+          ...(steps.length ? { steps } : {}),
         });
         const saved = transcript.current.get(requestId);
         if (saved) saved.response = content;
         finish(requestId, "generated");
       } catch (cause) {
-        if (!controller.signal.aborted) {
-          const message = cause instanceof Error ? cause.message : String(cause);
-          setError(message);
-          finish(requestId, "error", message);
+        const stopped = controller.signal.aborted;
+        const message = stopped
+          ? "stopped"
+          : cause instanceof Error ? cause.message : String(cause);
+        // The turn is written down either way. Its tool calls already changed
+        // the flow, and a thread that shows the reply but not the edits — or
+        // shows neither — is a thread that lies about what happened.
+        if ((steps.length || response.trim()) && latest.current.round === round && round.hasAgentThread(threadId)) {
+          round.appendAgentMessage(threadId, {
+            id: `${requestId}:assistant`,
+            role: "assistant",
+            content: response.trim(),
+            createdAt: new Date().toISOString(),
+            ...(steps.length ? { steps } : {}),
+            error: message,
+          });
         }
+        if (!stopped) setError(message);
+        finish(requestId, stopped ? "cancelled" : "error", message);
       } finally {
-        if (chatAbort.current === controller) chatAbort.current = null;
-        if (chatRequest.current === requestId) chatRequest.current = null;
-        setChatDraft("");
-        setChatting(false);
+        if (chatAbort.current.get(threadId) === controller) chatAbort.current.delete(threadId);
+        setRuns((current) => {
+          if (current[threadId]?.requestId !== requestId) return current;
+          const { [threadId]: _done, ...rest } = current;
+          return rest;
+        });
       }
     })();
-  }, [chatting, debate, finish]);
-
-  const clearChat = useCallback(() => {
-    chatAbort.current?.abort();
-    if (chatRequest.current) finish(chatRequest.current, "cancelled");
-    chatAbort.current = null;
-    chatRequest.current = null;
-    setChatDraft("");
-    setChatting(false);
-    latest.current.round.clearAgentMessages();
-  }, [finish]);
+  }, [debate, finish]);
 
   // A loaded or joined round is a different debate. Work started against the
   // old one must not arrive late and append itself to a document off screen.
   useEffect(() => {
     if (activeRound.current === ctx.round) return;
-    chatAbort.current?.abort();
-    if (chatRequest.current) finish(chatRequest.current, "cancelled");
+    for (const controller of chatAbort.current.values()) controller.abort();
+    for (const requestId of Object.values(runRef.current).map((run) => run.requestId)) {
+      finish(requestId, "cancelled");
+    }
     for (const [requestId, controller] of abort.current) {
       controller.abort();
       finish(requestId, "cancelled");
     }
     abort.current.clear();
-    chatAbort.current = null;
-    chatRequest.current = null;
+    chatAbort.current.clear();
     activeRound.current = ctx.round;
     setDrafts([]);
-    setChatDraft("");
-    setChatting(false);
+    setRuns({});
+    setActiveThread(null);
   }, [ctx.round, finish]);
 
   useEffect(() => () => {
-    chatAbort.current?.abort();
-    if (chatRequest.current) finish(chatRequest.current, "cancelled");
+    for (const controller of chatAbort.current.values()) controller.abort();
+    for (const run of Object.values(runRef.current)) finish(run.requestId, "cancelled");
     for (const controller of abort.current.values()) controller.abort();
     for (const draft of draftRef.current) finish(draft.requestId, "cancelled");
   }, [finish]);
@@ -384,11 +570,16 @@ export function useAgent(ctx: AgentContext): AgentControls {
     generate,
     accept,
     dismiss,
-    messages: ctx.round.agentMessages(),
-    chatDraft,
-    chatting,
+    threads,
+    thread,
+    activeThread: shownThread,
+    selectThread,
+    renameThread,
+    deleteThread,
     send,
-    clearChat,
+    stop,
+    clearThread,
+    running: Object.keys(runs).length > 0,
     importedCount: ctx.imported.length,
     error,
   };

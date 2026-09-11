@@ -71,8 +71,29 @@ export interface SheetJson {
    */
   order: number;
   arguments: ArgumentJson[];
-  /** Debate-wide chat, written only on the first sheet to avoid duplication. */
+  /**
+   * Debate-wide agent threads, written only on the first sheet to avoid
+   * duplication.
+   *
+   * Optional, and added without a `FORMAT` bump for the reason spelled out on
+   * `support` above: the version exists to stop a *newer* sheet being half-read,
+   * and an older build reading one of these drops a field it never knew about
+   * and gets exactly the flow it expects. Bumping instead would make every
+   * older build refuse the file outright — losing the arguments to save the
+   * chat, which is the wrong way round.
+   */
+  threads?: AgentThreadJson[];
+  /** What one thread was called before there could be more than one. Read, and
+      never written: it decodes into `threads` as the first thread. */
   agent?: AgentMessage[];
+}
+
+/** One agent thread as it is written. No id — an id is a fact about a session. */
+export interface AgentThreadJson {
+  title: string;
+  /** ISO 8601, when it is known. */
+  createdAt?: string;
+  messages: AgentMessage[];
 }
 
 /** A sheet's contents, as a round holds them. */
@@ -80,22 +101,32 @@ export interface SheetContents {
   title: string;
   order: number;
   roots: Argument[];
-  agentMessages?: AgentMessage[];
+  threads?: AgentThreadJson[];
 }
 
 /**
  * Write a sheet out. Indented and newline-terminated because these files are
  * meant to be read and diffed — a flow on one line would be neither.
  */
-export function encodeSheet({ title, order, roots, agentMessages }: SheetContents): string {
+export function encodeSheet({ title, order, roots, threads }: SheetContents): string {
   const sheet: SheetJson = {
     flow: FORMAT,
     title,
     order,
     arguments: roots.map(encodeArgument),
   };
-  if (order === 0 && agentMessages?.length) sheet.agent = agentMessages;
+  const kept = threads?.filter((thread) => thread.messages.length > 0) ?? [];
+  if (order === 0 && kept.length > 0) sheet.threads = kept;
   return `${JSON.stringify(sheet, null, 2)}\n`;
+}
+
+/** Every thread in a round, with its messages, ready to be written. */
+export function threadsOf(round: Round): AgentThreadJson[] {
+  return round.agentThreads().map((thread) => ({
+    title: thread.title,
+    ...(thread.createdAt ? { createdAt: thread.createdAt } : {}),
+    messages: round.agentMessages(thread.id),
+  }));
 }
 
 function encodeArgument(argument: Argument): ArgumentJson {
@@ -140,8 +171,30 @@ export function decodeSheet(text: string): SheetJson | null {
     title: typeof value.title === "string" ? value.title : "untitled",
     order: typeof value.order === "number" ? value.order : 0,
     arguments: decodeArguments(value.arguments),
+    ...(Array.isArray(value.threads) ? { threads: decodeThreads(value.threads) } : {}),
     ...(Array.isArray(value.agent) ? { agent: value.agent.filter(isAgentMessage) } : {}),
   };
+}
+
+/**
+ * The threads a directory holds: whichever sheet carries them, and a
+ * pre-threads `agent` list read as the first thread when nothing carries
+ * `threads` — so a round saved by an older build opens with its conversation
+ * intact rather than as a thread list with a hole in it.
+ */
+function threadsIn(sheets: SheetJson[]): AgentThreadJson[] {
+  const written = sheets.find((sheet) => sheet.threads?.length)?.threads;
+  if (written) return written;
+  const legacy = sheets.find((sheet) => sheet.agent?.length)?.agent;
+  return legacy ? [{ title: "Strategy", messages: legacy }] : [];
+}
+
+function decodeThreads(value: unknown[]): AgentThreadJson[] {
+  return value.filter(isRecord).map((thread) => ({
+    title: typeof thread.title === "string" ? thread.title : "Strategy",
+    ...(typeof thread.createdAt === "string" ? { createdAt: thread.createdAt } : {}),
+    messages: Array.isArray(thread.messages) ? thread.messages.filter(isAgentMessage) : [],
+  }));
 }
 
 function decodeArguments(value: unknown): ArgumentJson[] {
@@ -187,8 +240,9 @@ export function roundFrom(sheets: SheetJson[]): Round {
     // hundreds of commits, each one a render and an undo step.
     flow.batch(() => writeArguments(flow, null, sheet.arguments));
   }
-  const messages = sheets.find((sheet) => sheet.agent?.length)?.agent;
-  if (messages) round.replaceAgentMessages(messages);
+  for (const thread of threadsIn(sheets)) {
+    round.replaceAgentMessages(round.addAgentThread(thread.title), thread.messages);
+  }
   round.clearHistory();
   return round;
 }

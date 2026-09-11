@@ -78,3 +78,24 @@ describe("key config", () => {
     expect(config.problems).toEqual([]);
   });
 });
+
+it("selects a named model and preserves independent API settings", () => {
+  const local = { provider: "local", router: "http://localhost:11434/v1/chat/completions", api: "openai-chat-completions", model: "small" };
+  const remote = { ...local, provider: "remote", router: "https://example.com/v1/chat/completions", model: "large", apiKey: "test-key", outputTokens: 1500 };
+  const config = readConfig(JSON.stringify({ ai: { default: "remote", profiles: { local, remote } } }));
+  expect(config.aiProfile).toBe("remote");
+  expect(config.ai).toEqual(remote);
+  expect(config.aiProfiles.local).toEqual(local);
+  expect(config.problems).toEqual([]);
+});
+
+it("keeps valid profiles when another profile or the default is invalid", () => {
+  const local = { provider: "local", router: "http://localhost", api: "openai-chat-completions", model: "small" };
+  const config = readConfig(JSON.stringify({ ai: { default: "missing", profiles: { bad: {}, local } } }));
+  expect(config.aiProfile).toBe("local");
+  expect(config.ai).toEqual(local);
+  expect(config.problems).toHaveLength(2);
+  expect(config.keys.g).toBe("generate");
+  expect(readConfig('{"ai":{"profiles":[]}}').ai).toBeNull();
+  expect(readConfig('{"ai":{"profiles":{}}}').ai).toBeNull();
+});

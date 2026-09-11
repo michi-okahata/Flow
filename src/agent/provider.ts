@@ -1,4 +1,7 @@
+import { postToRouter } from "./http";
+import { responsesComplete } from "./responses";
 import { CHAT_TOOLS } from "./tools";
+import { LocalSubscriptionProvider } from "./local";
 import type {
   AiConfig,
   AgentChatRequest,
@@ -26,6 +29,10 @@ type WireMessage = { role: "system" | "user" | "assistant"; content: string };
  */
 export function providerFor(config: AiConfig): AgentProvider {
   switch (config.api) {
+    case "codex-subscription":
+    case "claude-subscription":
+      return new LocalSubscriptionProvider(config);
+    case "openai-responses":
     case "openai-chat-completions":
       return new OpenAICompatibleProvider(config);
     default:
@@ -80,14 +87,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
       return;
     }
     messages[0] = { role: "system", content: FLOW_SYSTEM_PROMPT + " Use tools to explore positions and argument chains. Before editing, read the full argument. Only edit when the user requests changes; strategy questions do not authorize edits. Report successful edits accurately, and never claim a failed edit succeeded." };
+    if (this.config.api === "openai-responses") {
+      yield* responsesComplete(this.config, messages, signal, execute);
+      return;
+    }
     for (let turn = 0; turn < 12; turn++) {
       signal.throwIfAborted();
-      const response = await fetch(this.config.router, {
-        method: "POST", signal,
-        headers: { "content-type": "application/json", ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}) },
-        body: JSON.stringify({ model: this.config.model, stream: false, messages, tools: CHAT_TOOLS, ...(this.config.outputTokens ? { max_tokens: this.config.outputTokens } : {}) }),
-      });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${(await response.text()).trim()}`);
+      const response = await postToRouter(this.config, {
+        model: this.config.model, stream: false, messages, tools: CHAT_TOOLS,
+        ...(this.config.outputTokens ? { max_tokens: this.config.outputTokens } : {}),
+      }, signal);
       const json = await response.json();
       const message = json.choices?.[0]?.message;
       if (!message) throw new Error("Provider returned no chat message");
@@ -114,27 +123,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
   }
 
   private async *complete(messages: WireMessage[], signal: AbortSignal): AsyncIterable<string> {
-    const response = await fetch(this.config.router, {
-      method: "POST",
-      signal,
-      headers: {
-        "content-type": "application/json",
-        ...(this.config.apiKey
-          ? { authorization: `Bearer ${this.config.apiKey}` }
-          : {}),
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        stream: true,
-        messages,
-        ...(this.config.outputTokens ? { max_tokens: this.config.outputTokens } : {}),
-      }),
-    });
-
-    if (!response.ok) {
-      const detail = (await response.text()).trim();
-      throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
+    if (this.config.api === "openai-responses") {
+      yield* responsesComplete(this.config, messages, signal);
+      return;
     }
+    const response = await postToRouter(this.config, {
+      model: this.config.model,
+      stream: true,
+      messages,
+      ...(this.config.outputTokens ? { max_tokens: this.config.outputTokens } : {}),
+    }, signal);
 
     const contentType = response.headers.get("content-type") ?? "";
     if (!response.body || contentType.includes("application/json")) {

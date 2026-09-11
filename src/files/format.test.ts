@@ -204,12 +204,28 @@ describe("fileNameFor", () => {
 });
 
 describe("roundFrom", () => {
-  it("persists debate-wide agent chat on the first sheet", () => {
-    const agent = [{ id: "m1", role: "user" as const, content: "prioritize case turns", createdAt: "now" }];
-    const text = encodeSheet({ title: "Case", order: 0, roots: [], agentMessages: agent });
+  it("persists debate-wide agent threads on the first sheet", () => {
+    const messages = [{ id: "m1", role: "user" as const, content: "prioritize case turns", createdAt: "now" }];
+    const threads = [{ title: "Case strategy", createdAt: "then", messages }];
+    const text = encodeSheet({ title: "Case", order: 0, roots: [], threads });
     const round = roundFrom([decodeSheet(text)!]);
-    expect(round.agentMessages()).toEqual(agent);
-    expect(JSON.parse(text).agent).toEqual(agent);
+    const [thread, ...rest] = round.agentThreads();
+    expect(rest).toEqual([]);
+    expect(thread.title).toBe("Case strategy");
+    expect(round.agentMessages(thread.id)).toEqual(messages);
+    expect(JSON.parse(text).threads).toEqual(threads);
+  });
+
+  it("reads a pre-threads file back as one thread", () => {
+    const agent = [{ id: "m1", role: "user" as const, content: "go for the DA", createdAt: "now" }];
+    const round = roundFrom([decodeSheet(JSON.stringify({ flow: 1, title: "Case", order: 0, arguments: [], agent }))!]);
+    const [thread] = round.agentThreads();
+    expect(round.agentMessages(thread.id)).toEqual(agent);
+  });
+
+  it("writes no thread list for a round nobody talked to", () => {
+    const text = encodeSheet({ title: "Case", order: 0, roots: [], threads: [{ title: "Strategy", messages: [] }] });
+    expect(JSON.parse(text).threads).toBeUndefined();
   });
 
   it("builds a round whose sheets read back as they were written", () => {

@@ -1,22 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   canRemember,
-  forgetImports,
-  importInto,
-  importOne,
   memorize,
-  readImported,
-  readContext,
   readMemorized,
   type Block,
+  type ImportedFile,
 } from "../memory/store";
 import { argumentKey, indexOf, recall as recallIn, type Recall } from "../memory/recall";
 import { blocksOf, countOf, filesIn, scan, scanFile } from "../memory/cmir";
 import { folderName, pickDirectory, pickFile } from "../files/disk";
 
 /**
- * The blocks the user has to hand, held in memory for the length of a session
- * and written through to `~/.flow` as they change.
+ * The blocks the user has to hand. Memorized answers are written through to
+ * `~/.flow`; imported evidence is workspace context and lives only in memory
+ * until the app closes.
  *
  * Read once, at launch. Every cursor movement asks this whether the argument it
  * landed on is one there are answers for, and nothing about moving the cursor
@@ -24,18 +21,16 @@ import { folderName, pickDirectory, pickFile } from "../files/disk";
  * copy that is used, with writes going to both.
  *
  * Two pieces of state rather than one list filtered two ways: the memorized half
- * is re-read every time the memory sheet writes, and the imported half is a
- * whole backfile that changes only when somebody asks for a folder. Together,
- * the second would be paid for every time the first moved — and a read of one
- * could land on top of a write to the other.
+ * is re-read every time the memory sheet writes, while the imported half is the
+ * current workspace and changes only when somebody imports or clears it.
  */
 
 export interface Memory {
   /** The ones you memorized — what the memory sheet shows and writes back. */
   memorized: Block[];
-  /** Imported CardMirror/Word blocks available to the debate agent's retriever. */
+  /** Session-only CardMirror/Word blocks available to the agent's retriever. */
   imported: Block[];
-  /** Hydrate full evidence for a small set selected from imported tags. */
+  /** Return full evidence already held in the current workspace. */
   contextFor: (blocks: Block[]) => Promise<Block[]>;
   /**
    * What answers this argument in this position — see `recall`. The position is
@@ -101,11 +96,10 @@ export function useMemory(): Memory {
     // Dropped if the component goes before the reads land — this runs twice
     // under StrictMode, and the throwaway pass must not set state.
     let live = true;
-    Promise.all([readMemorized(), readImported()]).then(
-      ([mine, theirs]) => {
+    readMemorized().then(
+      (mine) => {
         if (!live) return;
         setMemorized(mine);
-        setImported(theirs);
       },
       (reason) => live && setError(String(reason)),
     );
@@ -155,9 +149,8 @@ export function useMemory(): Memory {
 
   /**
    * Read a folder in. Not optimistic the way `keep` is — this is a deliberate
-   * act with a dialog in front of it, so it goes to the disk and comes back
-   * with what happened. Only the imported half is re-read, so a `m` pressed
-   * while the dialog was open isn't thrown away.
+   * act with a dialog in front of it, so it reads the selected files before
+   * replacing that folder's previous contents in the current workspace.
    */
   const importFrom = useCallback(async () => {
     if (!canRemember()) {
@@ -172,8 +165,12 @@ export function useMemory(): Memory {
       // the same string next time or the next import will double them.
       const scanned = await scan(picked);
       const files = filesIn(scanned);
-      await importInto(scanned.dir, files);
-      setImported(await readImported());
+      const prefix = scanned.dir.replace(/[\\/]+$/, "") + separatorFor(scanned.dir);
+      const incoming = blocksFrom(files);
+      setImported((current) => [
+        ...current.filter((block) => !block.source.startsWith(prefix)),
+        ...incoming,
+      ]);
       setError(null);
       setNote(read(scanned.dir, countOf(files), files.length, scanned));
     } catch (reason) {
@@ -183,9 +180,8 @@ export function useMemory(): Memory {
 
   /**
    * The single-file shape of `importFrom`, and not optimistic for the same
-   * reason: a dialog in front of it, the disk on the far side of it. The whole
-   * file is written even when its blocks come out empty — a file that now
-   * reads as nothing has said so, and what it said the last time must go.
+   * reason: a dialog in front of it, the disk on the far side of it. The file
+   * replaces its earlier workspace copy, including when it now has no blocks.
    */
   const importFile = useCallback(async () => {
     if (!canRemember()) {
@@ -200,8 +196,10 @@ export function useMemory(): Memory {
       // same file twice is one file, and reading its folder later sweeps it up.
       const file = await scanFile(picked);
       const blocks = blocksOf(file);
-      await importOne({ source: file.path, blocks });
-      setImported(await readImported());
+      setImported((current) => [
+        ...current.filter((block) => block.source !== file.path),
+        ...blocks.map((block) => ({ ...block, source: file.path })),
+      ]);
       setError(null);
       setNote(readOne(file.path, blocks.length));
     } catch (reason) {
@@ -210,19 +208,10 @@ export function useMemory(): Memory {
   }, []);
 
   const forget = useCallback(async () => {
-    if (!canRemember()) {
-      setError("importing needs the desktop app");
-      return;
-    }
     const dropped = theirsRef.current.length;
-    try {
-      await forgetImports();
-      setImported([]);
-      setError(null);
-      setNote(dropped === 1 ? "1 imported block dropped" : dropped + " imported blocks dropped");
-    } catch (reason) {
-      setError(String(reason));
-    }
+    setImported([]);
+    setError(null);
+    setNote(dropped === 1 ? "1 imported block dropped" : dropped + " imported blocks dropped");
   }, []);
 
   // Built once per change to a list rather than per keystroke — see `Index`.
@@ -233,7 +222,7 @@ export function useMemory(): Memory {
     (argument: string, position: string) => recallIn(argument, mine, theirs, position),
     [mine, theirs],
   );
-  const contextFor = useCallback((blocks: Block[]) => readContext(blocks), []);
+  const contextFor = useCallback(async (blocks: Block[]) => blocks, []);
 
   // One object, held between renders: the keymap takes this whole thing as part
   // of its context, and a fresh one every render would have it dropping and
@@ -290,4 +279,16 @@ function readOne(path: string, blocks: number): string {
   return blocks === 0
     ? "no blocks in " + name
     : blocks + (blocks === 1 ? " block from " : " blocks from ") + name;
+}
+
+/** Flatten scanned files into the in-memory shape used by retrieval. */
+function blocksFrom(files: ImportedFile[]): Block[] {
+  return files.flatMap((file) =>
+    file.blocks.map((block) => ({ ...block, source: file.source })),
+  );
+}
+
+/** Match a canonical folder without also matching a similarly named sibling. */
+function separatorFor(path: string): "/" | "\\" {
+  return path.includes("\\") && !path.includes("/") ? "\\" : "/";
 }

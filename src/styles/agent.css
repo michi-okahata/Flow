@@ -1,13 +1,56 @@
 .agent-panel {
   flex: none;
-  width: calc(250px * var(--zoom));
-  max-width: 42vw;
+  /* The width is an inline style: it is dragged, and a dragged value has to
+     live where the drag can write it. This is only the floor and the ceiling. */
+  min-width: 280px;
+  /* The ceiling is the layout's to decide, not a fraction picked here — see
+     layout/panels.ts, which is what the drag is passed through. This is only
+     the backstop that keeps the panel inside the window. */
+  max-width: 100%;
   height: calc(100vh - var(--status-height));
   border-left: 1px solid var(--rule);
   background: var(--sheet);
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  position: relative;
+}
+
+/* Expanded: the agent takes the window and the flow goes behind it. A round is
+   flowed in the columns and prepped in here, and prep wants the whole screen —
+   reading a position, its answers, and what the agent did to them does not fit
+   in a rail. ⇧⌘J and the header button switch between the two. */
+.agent-panel.is-expanded {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(1100px, 100%);
+  max-width: 100%;
+  z-index: 20;
+  box-shadow: -12px 0 32px -20px rgba(0, 0, 0, 0.55);
+}
+
+/* The left edge, four pixels of it, as a grab target that doesn't take space
+   from the panel — a border that can be dragged rather than a column. */
+.agent-panel__resize {
+  position: absolute;
+  top: 0;
+  left: -2px;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.agent-panel__resize:hover { background: var(--accent); opacity: 0.35; }
+.agent-panel.is-expanded .agent-panel__resize { display: none; }
+
+/* Expanded, the panel is wider than a line of prose wants to be. The turns
+   keep a column; the header, the thread strip and the composer keep the width,
+   because they are chrome and chrome belongs at the edges. */
+.agent-panel.is-expanded .agent-panel__messages > * {
+  max-width: 860px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .agent-panel button {
@@ -60,7 +103,26 @@
 }
 
 .agent-panel__context span { flex: 1; }
-.agent-panel__context button { padding: 0; text-decoration: underline; }
+.agent-panel__context button { padding: 0; }
+.agent-panel__context .agent-panel__import {
+  display: grid;
+  place-items: center;
+  width: calc(25px * var(--zoom));
+  height: calc(25px * var(--zoom));
+  padding: calc(4px * var(--zoom));
+  border: 1px solid var(--rule);
+  border-radius: calc(4px * var(--zoom));
+  color: var(--argument-fg);
+  background: var(--sheet);
+}
+.agent-panel__import svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
 
 .agent-panel__messages {
   flex: 1 1 auto;
@@ -75,10 +137,10 @@
   line-height: 1.45;
 }
 
-.agent-panel__message { margin-bottom: calc(10px * var(--zoom)); }
+.agent-panel__message { margin-bottom: calc(14px * var(--zoom)); }
 .agent-panel__message > span { display: block; margin-bottom: calc(2px * var(--zoom)); }
 .agent-panel__message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.agent-panel__message.is-user { padding-left: calc(14px * var(--zoom)); }
+.agent-panel__message.is-user { padding-left: 0; }
 .agent-panel__message.is-user p { color: var(--muted); }
 .agent-panel__thinking { margin: 0; }
 
@@ -104,9 +166,8 @@
 }
 
 .agent-panel__composer textarea::placeholder { color: var(--placeholder); }
-.agent-panel__composer > div { display: flex; justify-content: flex-end; gap: calc(6px * var(--zoom)); }
+.agent-panel__actions { display: flex; align-items: center; justify-content: flex-end; gap: calc(6px * var(--zoom)); }
 
-.agent-panel { width: calc(330px * var(--zoom)); max-width: 48vw; }
 .agent-panel__head { padding: 14px 16px; align-items: center; }
 .agent-panel__head strong { font-size: 13px; font-weight: 600; }
 .agent-panel__head span { font-size: 10px; margin-top: 3px; }
@@ -114,32 +175,253 @@
 .agent-panel select:focus-visible, .agent-panel textarea:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
-.agent-panel__tabs { display: flex; border-bottom: 1px solid var(--rule); padding: 0 12px; gap: 16px; }
-.agent-panel__tabs button { padding: 10px 0; border-bottom: 2px solid transparent; }
-.agent-panel__tabs button[aria-pressed="true"] { color: var(--argument-fg); border-bottom-color: var(--accent); }
-.agent-panel__position { display: grid; gap: 6px; padding: 12px 16px; color: var(--muted); }
-.agent-panel select, .position-browser input, .position-browser textarea {
-  box-sizing: border-box; width: 100%; border: 1px solid var(--rule); border-radius: 5px;
-  background: var(--sheet); color: var(--argument-fg); font: inherit; padding: 8px;
-}
-.position-browser { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 16px; }
-.position-browser__tree { list-style: none; margin: 8px 0 0; padding: 0; }
-.position-browser__tree .position-browser__tree { margin: 0 0 0 12px; padding-left: 6px; border-left: 1px solid var(--rule); }
-.position-browser__row { display: flex; align-items: center; border-radius: 5px; padding: 5px 2px; gap: 3px; }
-.position-browser__row.is-selected { background: var(--band-neg); box-shadow: inset 2px 0 var(--accent); }
-.position-browser__argument { min-width: 0; flex: 1; text-align: left; }
-.position-browser__argument small { display: block; font: 9px var(--font-mono); color: var(--placeholder); }
-.position-browser__argument span { display: block; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--argument-fg); }
-.position-browser__edit { padding: 8px; }
-.position-browser__edit textarea { resize: vertical; min-height: 90px; }
-.position-browser__edit > div { display: flex; justify-content: flex-end; gap: 12px; margin-top: 6px; }
+.agent-panel__composer textarea:focus-visible { outline: none; }
 .agent-panel__error { margin: 8px 16px; padding: 8px; border: 1px solid var(--rule); overflow-wrap: anywhere; }
-.agent-panel__messages { padding: 16px; }
-.agent-panel__message { padding: 10px; border: 1px solid var(--rule); border-radius: 6px; }
-.agent-panel__message.is-user { background: var(--band-neg); margin-left: 20px; }
+.agent-panel__messages { padding: 16px 20px; }
+.agent-panel__message { padding: 0; border: 0; border-radius: 0; }
+.agent-panel__message.is-user { background: transparent; margin-left: 0; }
 .agent-panel__composer { padding: 12px 16px; }
-.agent-panel__composer > div { margin-top: 10px; }
+.agent-panel__actions { margin-top: 10px; }
 .agent-panel__composer button[type="submit"] { background: var(--argument-fg); color: var(--sheet); padding: 5px 12px; border-radius: 4px; }
+/* Too narrow to sit beside the flow at all: the panel becomes the window, and
+   the drag stops meaning anything. */
 @media (max-width: 640px) {
-  .agent-panel { position: absolute; right: 0; z-index: 20; width: 100%; max-width: 100%; }
+  .agent-panel { position: absolute; right: 0; z-index: 20; width: 100% !important; max-width: 100%; }
+  .agent-panel__resize { display: none; }
+}
+
+.agent-markdown { overflow-wrap: anywhere; line-height: 1.5; }
+.agent-panel__message .agent-markdown p { white-space: normal; margin: 0 0 0.65em; }
+.agent-markdown > :first-child { margin-top: 0; }
+.agent-markdown > :last-child { margin-bottom: 0; }
+.agent-markdown :is(h1, h2, h3, h4, h5, h6) { font-size: 1em; line-height: 1.4; margin: 1em 0 0.4em; }
+.agent-markdown :is(ul, ol) { margin: 0.5em 0; padding-left: 1.6em; }
+.agent-markdown li + li { margin-top: 0.25em; }
+.agent-markdown blockquote { margin: 0.7em 0; padding-left: 0.8em; border-left: 2px solid var(--rule); color: var(--muted); }
+.agent-markdown code { font-family: var(--font-mono); font-size: 0.9em; background: var(--band-neg); padding: 0.1em 0.3em; border-radius: 3px; }
+.agent-markdown pre { overflow-x: auto; padding: 8px; background: var(--band-neg); border-radius: 4px; white-space: pre; }
+.agent-markdown pre code { padding: 0; background: none; }
+.agent-markdown a { color: var(--accent); text-decoration: underline; }
+.agent-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.7em 0; }
+.agent-markdown :is(th, td) { border: 1px solid var(--rule); padding: 4px 6px; text-align: left; }
+.agent-markdown img { max-width: 100%; height: auto; }
+.agent-markdown hr { border: 0; border-top: 1px solid var(--rule); margin: 1em 0; }
+
+/* The model picker, in the composer's own row. Drawn as one of the row's
+   controls rather than as a form field — a bordered box beside two bare
+   buttons would be the loudest thing in a panel made of hairlines, and it is
+   read far more often than it is changed. `margin-right: auto` is what keeps
+   send and stop against the right edge, where they were. */
+.agent-panel__model { min-width: 0; margin-right: auto; }
+
+.agent-panel__model select {
+  max-width: 38ch;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: calc(9px * var(--zoom));
+  cursor: pointer;
+}
+
+.agent-panel__model select:hover { color: var(--accent); background: var(--band-neg); }
+
+
+/* ---- threads ---------------------------------------------------------- */
+
+/* The strip of threads. Horizontal because the panel is a rail more often than
+   it is a window, and a rail has width to spare only sideways — it scrolls when
+   there are more threads than fit. */
+.agent-threads {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.agent-threads__list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+
+.agent-sidebar .agent-threads__list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(1px * var(--zoom));
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 calc(4px * var(--zoom));
+}
+
+.agent-sidebar .agent-threads__chip {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: calc(5px * var(--zoom));
+  padding: calc(3px * var(--zoom)) calc(7px * var(--zoom));
+  line-height: normal;
+  gap: calc(7px * var(--zoom));
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.agent-sidebar .agent-threads__chip > button:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  text-align: left;
+}
+
+.agent-sidebar .agent-threads__chip:hover { background: var(--argument-hover); }
+.agent-sidebar .agent-threads__chip.is-active {
+  border-left: 1px solid var(--cursor);
+  background: var(--accent-soft);
+}
+.agent-sidebar .agent-threads__act { display: none; }
+.agent-sidebar .agent-threads__chip:hover .agent-threads__act,
+.agent-sidebar .agent-threads__chip.is-active .agent-threads__act { display: block; }
+
+.agent-threads__new,
+.agent-threads__chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0 4px 0 8px;
+  background: var(--sheet);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.agent-threads__new { padding: 0 10px; color: var(--muted); cursor: pointer; }
+.agent-threads__new.is-active { border-color: var(--accent); color: var(--accent); }
+
+.agent-threads__chip > button:first-child {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+}
+
+/* The one you are looking at is the only one showing its rename and delete —
+   two buttons per thread on every chip would be a strip of buttons with some
+   words between them. */
+.agent-threads__chip.is-active {
+  border-color: var(--accent);
+  background: var(--band-neg);
+}
+
+.agent-threads__chip.is-active > button:first-child { color: var(--argument-fg); }
+.agent-threads__act { padding: 0 3px; font-size: 11px; }
+
+/* A thread can be working while you read another one. The dot is how the strip
+   says so. */
+.agent-threads__dot {
+  width: 5px;
+  height: 5px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  animation: agent-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-threads__dot { animation: none; }
+}
+
+.agent-threads__chip.is-renaming { padding: 0 6px; }
+.agent-threads__chip.is-renaming input {
+  width: 18ch;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--argument-fg);
+  font: inherit;
+}
+
+.agent-panel__head-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ---- turns ------------------------------------------------------------ */
+
+.agent-panel__message > span.agent-panel__who { display: flex; align-items: center; gap: 6px; }
+
+.agent-panel__badge {
+  font-style: normal;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0 4px;
+  color: var(--muted);
+}
+
+.agent-panel__message.is-failed { border-color: var(--muted); }
+
+/* The tool calls of a turn — the part that changed the document. One line each
+   until you open it, because during a round the answer to "what did it do" is
+   a list of verbs, not a list of JSON. */
+.agent-steps {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  border-left: 2px solid var(--rule);
+}
+
+.agent-steps__step { padding: 1px 0 1px 8px; }
+.agent-steps__step.is-error { border-left: 2px solid var(--muted); margin-left: -2px; }
+
+.agent-steps summary {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  list-style: none;
+}
+
+.agent-steps summary::-webkit-details-marker { display: none; }
+.agent-steps summary::before { content: "·"; color: var(--placeholder); }
+.agent-steps__step.is-done summary::before { content: "✓"; }
+.agent-steps__step.is-error summary::before { content: "!"; }
+.agent-steps__step.is-running summary::before { content: "→"; color: var(--accent); }
+.agent-steps__name { color: var(--argument-fg); flex: none; }
+.agent-steps__args { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.agent-steps pre {
+  margin: 4px 0;
+  padding: 6px;
+  background: var(--band-neg);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-panel__stop {
+  background: var(--band-neg);
+  border: 1px solid var(--rule) !important;
+  padding: 5px 12px;
+  border-radius: 4px;
 }

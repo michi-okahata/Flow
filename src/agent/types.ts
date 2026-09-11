@@ -21,6 +21,26 @@ export interface AgentMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  /** What the agent did to the document on this turn, in the order it did it.
+      Kept on the message rather than only in the transcript file: a tool call
+      changed the flow, and the thread is where you look to find out why. */
+  steps?: AgentStep[];
+  /** Set when the turn failed or was stopped. The content is whatever had
+      streamed by then, which is worth keeping — the steps above it already
+      happened. */
+  error?: string;
+}
+
+/** One tool call, as the panel watches it run. */
+export interface AgentStep {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: "running" | "done" | "error";
+  /** One line of what came back, or what went wrong. */
+  detail?: string;
+  startedAt: string;
+  finishedAt?: string;
 }
 
 export interface AgentContextBlock {

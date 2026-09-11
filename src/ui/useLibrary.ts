@@ -16,6 +16,7 @@ import {
   fileNameFor,
   roundFrom,
   sortSheets,
+  threadsOf,
 } from "../files/format";
 
 /**
@@ -138,7 +139,7 @@ export function useLibrary(round: Round, load: (round: Round) => void): Library 
           title: sheet.title,
           order,
           roots: current.flow(sheet.id).roots(),
-          agentMessages: order === 0 ? current.agentMessages() : undefined,
+          threads: order === 0 ? threadsOf(current) : undefined,
         });
         const kept = files.current.get(sheet.id);
         if (kept?.name === name && written.current.get(sheet.id) === text) continue;
@@ -262,7 +263,7 @@ export function useLibrary(round: Round, load: (round: Round) => void): Library 
             title: sheet.title,
             order,
             roots: next.flow(sheet.id).roots(),
-            agentMessages: order === 0 ? next.agentMessages() : undefined,
+            threads: order === 0 ? threadsOf(next) : undefined,
           }),
         );
       });

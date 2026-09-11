@@ -46,9 +46,11 @@ export interface Config {
   problems: string[];
   /** The optional answer-generating backend. */
   ai: AiConfig | null;
+  aiProfiles: Record<string, AiConfig>;
+  aiProfile: string | null;
 }
 
-export const DEFAULT_CONFIG: Config = { keys: DEFAULT_KEYS, problems: [], ai: null };
+export const DEFAULT_CONFIG: Config = { keys: DEFAULT_KEYS, problems: [], ai: null, aiProfiles: {}, aiProfile: null };
 
 /**
  * Read a config, or the defaults where there is no file.
@@ -65,11 +67,11 @@ export function readConfig(text: string | null): Config {
   } catch (e) {
     // The parser's own message names the line and column, which is the whole
     // of what is useful about a syntax error in a file you are editing.
-    return { keys: DEFAULT_KEYS, problems: [`config.json: ${(e as Error).message}`], ai: null };
+    return { ...DEFAULT_CONFIG, keys: DEFAULT_KEYS, problems: [`config.json: ${(e as Error).message}`], ai: null };
   }
 
   if (!isObject(parsed)) {
-    return { keys: DEFAULT_KEYS, problems: ["config.json: expected an object"], ai: null };
+    return { ...DEFAULT_CONFIG, keys: DEFAULT_KEYS, problems: ["config.json: expected an object"], ai: null };
   }
 
   const keys = { ...DEFAULT_KEYS };
@@ -102,13 +104,30 @@ export function readConfig(text: string | null): Config {
     }
   }
 
-  return {
-    keys,
-    problems,
-    ai: parsed.ai !== undefined
-      ? readAi(parsed.ai, problems)
-      : readLegacyAgent(parsed.agent, problems),
-  };
+  const aiProfiles: Record<string, AiConfig> = Object.create(null);
+  let aiProfile: string | null = null;
+  if (isObject(parsed.ai) && parsed.ai.profiles !== undefined) {
+    if (!isObject(parsed.ai.profiles)) {
+      problems.push('config.json: "ai.profiles" must be an object of named profiles');
+    } else {
+      for (const [name, value] of Object.entries(parsed.ai.profiles)) {
+        const issues: string[] = [];
+        const profile = readAi(value, issues);
+        problems.push(...issues.map(issue => `${name}: ${issue}`));
+        if (profile && name.trim()) aiProfiles[name] = profile;
+        else if (!issues.length) problems.push(`config.json: invalid AI profile "${name}"`);
+      }
+    }
+    const preferred = parsed.ai.default;
+    if (preferred !== undefined && (typeof preferred !== "string" || !Object.prototype.hasOwnProperty.call(aiProfiles, preferred))) {
+      problems.push('config.json: "ai.default" must name a valid profile');
+    }
+    aiProfile = typeof preferred === "string" && Object.prototype.hasOwnProperty.call(aiProfiles, preferred) ? preferred : Object.keys(aiProfiles)[0] ?? null;
+  } else {
+    const ai = parsed.ai !== undefined ? readAi(parsed.ai, problems) : readLegacyAgent(parsed.agent, problems);
+    if (ai) { aiProfiles.default = ai; aiProfile = "default"; }
+  }
+  return { keys, problems, aiProfiles, aiProfile, ai: aiProfile ? aiProfiles[aiProfile] : null };
 }
 
 function readAi(value: unknown, problems: string[]): AiConfig | null {

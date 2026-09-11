@@ -147,8 +147,13 @@
 }
 
 /* Shading marks hidden text; the quiet chevron expands it without editing. */
-.flow-argument.is-collapsed { background: rgb(0 0 0 / 5%); }
-.flow-argument.is-collapsed:hover { background: rgb(0 0 0 / 8%); }
+.flow-cell:has(.flow-argument.is-collapsed):not(.is-cursor):not(.is-peer) {
+  background: rgb(0 0 0 / 5%);
+}
+.flow-cell:has(.flow-argument.is-collapsed):not(.is-cursor):not(.is-peer):hover {
+  background: rgb(0 0 0 / 8%);
+}
+.flow-argument.is-collapsed:hover { background: transparent; }
 .flow-argument__disclosure {
   display: inline-flex;
   align-items: center;

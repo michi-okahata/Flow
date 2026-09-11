@@ -1,102 +1,176 @@
 import React, { useEffect, useRef, useState } from "react";
-import { PositionBrowser } from "./PositionBrowser";
-import type { Argument, Speech } from "../model/types";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { AgentControls } from "../agent/useAgent";
+import type { AgentMessage, AgentStep } from "../agent/types";
 
 interface AgentPanelProps {
   open: boolean;
-  roots: Argument[];
-  speeches: Speech[];
-  sheets: { id: string; title: string }[];
-  activeSheet: string | null;
-  selected: string | null;
-  onOpenSheet: (id: string) => void;
-  onSelect: (id: string) => void;
-  onSave: (id: string, before: string, text: string) => string | null;
+  profiles: { name: string; provider: string; model: string; subscription: boolean }[];
+  profile: string | null;
+  onProfileChange: (name: string) => void;
   agent: AgentControls;
+  /** Panel width in pixels, and the drag that changes it. */
+  width: number;
+  onWidthChange: (width: number) => void;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   onToggle: () => void;
   onImportFolder: () => void;
   onImportFile: () => void;
 }
 
-/** Debate-wide strategy chat. Its conversation lives on Round; this component
- * is only the view, so closing it or changing sheets cannot lose direction. */
+const MIN_WIDTH = 280;
+
+/**
+ * The agent's half of the app: several threads of work against one round, and
+ * a record of what each turn actually did.
+ *
+ * It is written as a harness rather than as a chat window, which is a claim
+ * about what the agent is. The agent edits the flow — it creates positions,
+ * moves arguments, rewrites text — and a transcript that shows only prose is
+ * hiding the part that changed the document. So every tool call is drawn where
+ * it happened, in the turn that made it, with its arguments and what came back.
+ * A reply you can read but not audit is worse than no reply during a round.
+ *
+ * The conversation lives on Round, so closing the panel or changing sheets
+ * cannot lose direction; this component is only the view.
+ */
 export function AgentPanel({
-  open, roots, speeches, sheets, activeSheet, selected, onOpenSheet, onSelect, onSave,
+  open, profiles, profile, onProfileChange,
   agent,
+  width, onWidthChange,
+  expanded, onExpandedChange,
   onToggle,
   onImportFolder,
   onImportFile,
 }: AgentPanelProps): React.ReactElement {
-  const [tab, setTab] = useState<"chat" | "positions">("chat");
   const [text, setText] = useState("");
   const end = useRef<HTMLDivElement | null>(null);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
+  const thread = agent.thread;
 
   useEffect(() => {
     if (open) end.current?.scrollIntoView({ block: "nearest" });
-  }, [open, agent.messages, agent.chatDraft]);
+  }, [open, thread?.messages, thread?.draft, thread?.steps]);
+
+  useEffect(() => {
+    if (open) requestAnimationFrame(() => composer.current?.focus());
+  }, [open]);
+
+  useEffect(() => {
+    const openFile = (event: KeyboardEvent) => {
+      if (
+        !open ||
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== "o"
+      ) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) onImportFile();
+    };
+    window.addEventListener("keydown", openFile, true);
+    return () => window.removeEventListener("keydown", openFile, true);
+  }, [open, onImportFile]);
 
   const submit = () => {
-    if (!text.trim() || agent.chatting) return;
+    if (!text.trim() || thread?.running) return;
     agent.send(text);
     setText("");
   };
 
+  // Dragging the left edge. Tracked on the window rather than the handle so the
+  // pointer can outrun the element it started on, which at a fast drag it will.
+  //
+  // The drag starts from the width on screen rather than from the width in
+  // state: when the flow has stepped out the panel is filling the space it
+  // left, and those two are not the same number. Measuring keeps the edge
+  // under the pointer across that boundary. Where the panel may come to rest
+  // is not decided here — that is the layout's rule, and the caller applies it
+  // (see layout/panels.ts).
+  const panel = useRef<HTMLElement | null>(null);
+  const startResize = (event: React.PointerEvent) => {
+    event.preventDefault();
+    const from = event.clientX;
+    const start = panel.current?.getBoundingClientRect().width ?? width;
+    const move = (moved: PointerEvent) => {
+      const next = Math.max(MIN_WIDTH, Math.min(window.innerWidth, start + (from - moved.clientX)));
+      onWidthChange(next);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
+
   return (
-    <aside className="agent-panel" aria-label="debate agent" onKeyDown={event => {
-      if (!(event.metaKey && event.key.toLowerCase() === "j")) event.stopPropagation();
-    }}>
+    <aside
+      ref={panel}
+      className={`agent-panel${expanded ? " is-expanded" : ""}`}
+      style={expanded ? undefined : { width: `${width}px` }}
+      aria-label="debate agent"
+      onKeyDown={event => {
+        if (!(event.metaKey && event.key.toLowerCase() === "j")) event.stopPropagation();
+      }}
+    >
+      <div
+        className="agent-panel__resize"
+        onPointerDown={startResize}
+        onDoubleClick={() => onExpandedChange(!expanded)}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="resize the agent panel"
+        title="drag to resize — double-click to expand"
+      />
+
       <header className="agent-panel__head">
-        <div>
-          <strong>Debate agent</strong>
-          <span>directions guide future drafts</span>
+        <strong>Agent{agent.running ? " · working" : ""}</strong>
+        <div className="agent-panel__head-actions">
+          <button
+            type="button"
+            onClick={() => onExpandedChange(!expanded)}
+            title={expanded ? "shrink the agent panel (⇧⌘J)" : "expand the agent panel (⇧⌘J)"}
+            aria-pressed={expanded}
+          >{expanded ? "⇥" : "⇤"}</button>
+          <button className="agent-panel__close" type="button" onClick={onToggle} title="close the agent (⌘J)">×</button>
         </div>
-        <button className="agent-panel__close" type="button" onClick={onToggle} title="close debate agent">×</button>
       </header>
 
-      <nav className="agent-panel__tabs" aria-label="Agent views">
-        <button type="button" aria-pressed={tab === "chat"} onClick={() => setTab("chat")}>Strategy</button>
-        <button type="button" aria-pressed={tab === "positions"} onClick={() => setTab("positions")}>Position tree</button>
-      </nav>
-      {tab === "positions" ? <>
-        <label className="agent-panel__position">Position
-          <select aria-label="Position" value={activeSheet ?? ""} onChange={event => onOpenSheet(event.target.value)}>
-            {sheets.map(sheet => <option key={sheet.id} value={sheet.id}>{sheet.title}</option>)}
-          </select>
-        </label>
-        <PositionBrowser key={activeSheet} roots={roots} speeches={speeches} selected={selected} onSelect={onSelect} onSave={onSave} />
-      </> : <>
       <div className="agent-panel__context">
         <span>{agent.importedCount} evidence blocks available</span>
-        <button type="button" onClick={onImportFolder} title="import .cmir and .docx files recursively">folder</button>
-        <button type="button" onClick={onImportFile} title="import a .cmir or .docx file">file</button>
+        <button
+          type="button"
+          className="agent-panel__import"
+          onClick={onImportFile}
+          title="Add a .cmir or .docx file (⌘O)"
+          aria-label="add evidence file"
+        ><FileIcon /></button>
+        <button className="agent-panel__import" type="button" onClick={onImportFolder} title="Add every .cmir and .docx file in a folder" aria-label="add evidence folder"><FolderIcon /></button>
       </div>
 
       <div className="agent-panel__messages" aria-live="polite">
-        {agent.messages.length === 0 && !agent.chatDraft && (
-          <p className="agent-panel__empty">
-            Set strategy, ask about the flow, or tell the agent how to develop later arguments.
-          </p>
-        )}
-        {agent.messages.map((message) => (
-          <article key={message.id} className={`agent-panel__message is-${message.role}`}>
-            <span>{message.role === "user" ? "you" : "agent"}</span>
-            <p>{message.content}</p>
-          </article>
-        ))}
-        {agent.chatDraft && (
+        {thread?.messages.map((message) => <Turn key={message.id} message={message} />)}
+        {thread?.running && (
           <article className="agent-panel__message is-assistant is-streaming">
-            <span>agent</span>
-            <p>{agent.chatDraft}</p>
+            <span className="agent-panel__who">agent</span>
+            <Steps steps={thread.steps} />
+            {thread.draft
+              ? <div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml>{thread.draft}</Markdown></div>
+              : <p className="agent-panel__thinking">{thread.steps.length ? "working…" : "thinking…"}</p>}
           </article>
         )}
-        {agent.chatting && !agent.chatDraft && <p className="agent-panel__thinking">thinking…</p>}
         <div ref={end} />
       </div>
 
       {agent.error && <p className="agent-panel__error" role="alert">{agent.error}</p>}
       <form className="agent-panel__composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
         <textarea
+          ref={composer}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
@@ -107,19 +181,109 @@ export function AgentPanel({
               submit();
             }
           }}
-          placeholder="direct strategy or ask about the debate"
+          placeholder={thread ? "reply, or send more direction" : "Message the agent…"}
           aria-label="message the debate agent"
           rows={3}
           maxLength={8000}
         />
-        <div>
-          {agent.messages.length > 0 && (
-            <button type="button" onClick={agent.clearChat}>clear</button>
+        <div className="agent-panel__actions">
+          {/* Named where it is chosen: the model is a property of the message
+              you are about to send, not of the panel, so it sits with send
+              rather than in the header. The label is the profile's own name —
+              a "Model" caption beside a picker that says "deepseek" is a word
+              spent saying what the next word already says. */}
+          {profiles.length > 0 && (
+            <label className="agent-panel__model">
+              <select
+                aria-label="Agent model profile"
+                value={profile ?? ""}
+                title="which model answers this thread"
+                onChange={event => onProfileChange(event.target.value)}
+              >
+                {profiles.map(item => (
+                  <option key={item.name} value={item.name}>
+                    {item.name} · {item.subscription ? "subscription" : item.provider} · {item.model}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
-          <button type="submit" disabled={!text.trim() || agent.chatting}>send</button>
+          {thread && thread.messages.length > 0 && (
+            <button type="button" onClick={() => agent.clearThread(thread.id)}>clear</button>
+          )}
+          {thread?.running
+            ? <button type="button" className="agent-panel__stop" onClick={() => agent.stop(thread.id)}>stop</button>
+            : <button type="submit" disabled={!text.trim()}>send</button>}
         </div>
       </form>
-      </>}
     </aside>
   );
+}
+
+/** A finished turn, tool calls and all. */
+function Turn({ message }: { message: AgentMessage }): React.ReactElement {
+  return (
+    <article className={`agent-panel__message is-${message.role}${message.error ? " is-failed" : ""}`}>
+      <span className="agent-panel__who">
+        {message.role === "user" ? "›" : "agent"}
+        {message.error && <em className="agent-panel__badge">{message.error}</em>}
+      </span>
+      {message.steps?.length ? <Steps steps={message.steps} /> : null}
+      {message.content && (
+        <div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</Markdown></div>
+      )}
+    </article>
+  );
+}
+
+function FileIcon(): React.ReactElement {
+  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5h5l3 3v10h-8zM9.5 1.5v3h3" /></svg>;
+}
+
+function FolderIcon(): React.ReactElement {
+  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4h5l1.5 2h6.5v7.5h-13zM1.5 4V2.5h4L7 4" /></svg>;
+}
+
+/** The tool calls of one turn. Collapsed to a line each: the name, the target,
+    and how it went — open one to see exactly what was sent and returned. */
+function Steps({ steps }: { steps: AgentStep[] }): React.ReactElement | null {
+  if (steps.length === 0) return null;
+  return (
+    <ol className="agent-steps">
+      {steps.map((step) => (
+        <li key={step.id} className={`agent-steps__step is-${step.status}`}>
+          <details>
+            <summary>
+              <span className="agent-steps__name">{step.name}</span>
+              <span className="agent-steps__args">{headline(step)}</span>
+            </summary>
+            <pre>{JSON.stringify(step.arguments, null, 2)}</pre>
+            {/* The headline is already the error on a failed step; repeating it
+                underneath its own arguments says nothing twice. */}
+            {step.detail && step.detail !== headline(step) && (
+              <pre className="agent-steps__detail">{step.detail}</pre>
+            )}
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The one thing worth reading on a collapsed step: what it was aimed at while
+    it runs, what came back once it is done, and the error when it failed. */
+function headline(step: AgentStep): string {
+  if (step.status === "error") return step.detail ?? "failed";
+  if (step.status === "running") return target(step.arguments);
+  return step.detail || target(step.arguments);
+}
+
+function target(args: Record<string, unknown>): string {
+  for (const key of ["title", "text", "argument_id", "position_id"]) {
+    const value = args[key];
+    if (typeof value === "string" && value) {
+      return value.length > 60 ? `${value.slice(0, 59)}…` : value;
+    }
+  }
+  return "";
 }

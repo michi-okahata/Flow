@@ -1,5 +1,5 @@
 import { LoroDoc, UndoManager } from "loro-crdt";
-import type { LoroList, LoroMovableList, Subscription } from "loro-crdt";
+import type { LoroMovableList, Subscription } from "loro-crdt";
 import { Flow, LEGACY_SHEET_ID } from "./flow";
 import type { PeerRecord, Role } from "./types";
 import type { AgentMessage } from "../agent/types";
@@ -29,9 +29,26 @@ const SHEETS_KEY = "sheets";
  */
 const PEERS_KEY = "peers";
 
-/** Debate-wide assistant conversation. It belongs to the round rather than a
- * sheet so strategy given on case still guides a draft on a disadvantage. */
-const AGENT_CHAT_KEY = "agent-chat";
+/**
+ * The ordered list of agent threads: `{ id, title, createdAt }`, id doubling
+ * as the key of the list its messages live in — the same trick a sheet plays
+ * with its tree.
+ *
+ * Threads belong to the round rather than a sheet, so strategy given on case
+ * still guides a draft on a disadvantage; and there are several of them
+ * because one running conversation is the wrong unit of work. Prep for the
+ * politics DA and a question about the 1AR on topicality are two lines of
+ * thought, and interleaving them in one transcript makes each of them worse —
+ * the model's context fills with the other debate, and yours does too.
+ */
+const AGENT_THREADS_KEY = "agent-threads";
+
+/**
+ * Where the assistant conversation lived when there was only ever one. It is
+ * still a thread — the first one — and is reported as such without being
+ * rewritten; see `agentThreads`.
+ */
+const LEGACY_THREAD_ID = "agent-chat";
 
 /**
  * Commit origin for writes that are bookkeeping rather than flowing — the peer
@@ -48,6 +65,15 @@ const AGENT_ORIGIN = "agent";
  * created the argument it went into — into a single undo.
  */
 const UNDO_MERGE_MS = 500;
+
+/** One line of conversation with the agent: what it is called, and when. */
+export interface AgentThreadInfo {
+  id: string;
+  title: string;
+  /** ISO 8601. Empty on the inferred pre-threads conversation, which has no
+      recorded start. */
+  createdAt: string;
+}
 
 export interface SheetInfo {
   id: string;
@@ -67,7 +93,7 @@ export class Round {
       and it has to run anyway — a peer on a newer version may write a shape
       this one doesn't know. */
   private readonly list: LoroMovableList;
-  private readonly agentChat: LoroList;
+  private readonly threads: LoroMovableList;
   private readonly history: UndoManager;
   /** One `Flow` per sheet, built on demand and kept — a sheet's tree handle is
       cheap, but handing out a new one per render would break identity for
@@ -82,7 +108,7 @@ export class Round {
   constructor(doc: LoroDoc = new LoroDoc()) {
     this.doc = doc;
     this.list = doc.getMovableList(SHEETS_KEY);
-    this.agentChat = doc.getList(AGENT_CHAT_KEY);
+    this.threads = doc.getMovableList(AGENT_THREADS_KEY);
     this.history = new UndoManager(doc, {
       mergeInterval: UNDO_MERGE_MS,
       excludeOriginPrefixes: [SYNC_ORIGIN, AGENT_ORIGIN],
@@ -91,26 +117,112 @@ export class Round {
 
   /* ---- debate assistant ------------------------------------------------ */
 
-  agentMessages(): AgentMessage[] {
-    const value: unknown = this.agentChat.toJSON();
+  /**
+   * Every thread, oldest first.
+   *
+   * A document written before threads existed kept its messages in a single
+   * list named `agent-chat`, and it is reported here as one thread without
+   * anything being written — the same reasoning as `sheets`: a migration that
+   * wrote to the document would be a change made by whichever peer happened to
+   * open it first.
+   *
+   * Empty is a real answer. Nobody gets a thread they never asked for: the
+   * first one is written when the first message is sent (see `addAgentThread`).
+   */
+  agentThreads(): AgentThreadInfo[] {
+    const listed = this.threads.toArray().filter(isThread);
+    if (listed.length > 0) return listed;
+    return this.doc.getList(LEGACY_THREAD_ID).length > 0
+      ? [{ id: LEGACY_THREAD_ID, title: "Strategy", createdAt: "" }]
+      : [];
+  }
+
+  /**
+   * A value that changes whenever the document does.
+   *
+   * For memoized reads of the document — a thread's messages are not a value
+   * React can compare, and re-reading every thread on every keystroke of a
+   * flow is not free. The frontiers are the document's own answer to "as of
+   * when", and they move on every commit, local or remote.
+   */
+  version(): string {
+    return this.doc.frontiers().map(({ peer, counter }) => `${peer}:${counter}`).join(",");
+  }
+
+  hasAgentThread(threadId: string): boolean {
+    return this.agentThreads().some((thread) => thread.id === threadId);
+  }
+
+  agentMessages(threadId: string): AgentMessage[] {
+    const value: unknown = this.doc.getList(threadId).toJSON();
     return Array.isArray(value) ? value.filter(isAgentMessage) : [];
   }
 
-  appendAgentMessage(message: AgentMessage): void {
-    this.agentChat.insert(this.agentChat.length, message);
+  appendAgentMessage(threadId: string, message: AgentMessage): void {
+    const list = this.doc.getList(threadId);
+    list.insert(list.length, message);
     this.doc.commit({ origin: AGENT_ORIGIN });
   }
 
-  replaceAgentMessages(messages: AgentMessage[]): void {
-    this.agentChat.clear();
-    for (const message of messages) this.agentChat.insert(this.agentChat.length, message);
+  replaceAgentMessages(threadId: string, messages: AgentMessage[]): void {
+    const list = this.doc.getList(threadId);
+    list.clear();
+    for (const message of messages) list.insert(list.length, message);
     this.doc.commit({ origin: AGENT_ORIGIN });
   }
 
-  clearAgentMessages(): void {
-    if (this.agentChat.length === 0) return;
-    this.agentChat.clear();
+  clearAgentMessages(threadId: string): void {
+    const list = this.doc.getList(threadId);
+    if (list.length === 0) return;
+    list.clear();
     this.doc.commit({ origin: AGENT_ORIGIN });
+  }
+
+  /**
+   * Start a thread. Returns its id, which is also the key of the list its
+   * messages go in — random rather than derived from the title, because a
+   * thread gets renamed once you know what it turned out to be about.
+   */
+  addAgentThread(title: string): string {
+    const id = `agent-chat-${Math.random().toString(36).slice(2, 8)}`;
+    for (const thread of this.materializeThreads()) {
+      if (thread.id === id) return this.addAgentThread(title);
+    }
+    this.threads.insert(this.threads.length, { id, title, createdAt: new Date().toISOString() });
+    this.doc.commit({ origin: AGENT_ORIGIN });
+    return id;
+  }
+
+  renameAgentThread(threadId: string, title: string): void {
+    const threads = this.materializeThreads();
+    const index = threads.findIndex((thread) => thread.id === threadId);
+    if (index < 0) return;
+    this.threads.set(index, { ...threads[index], title });
+    this.doc.commit({ origin: AGENT_ORIGIN });
+  }
+
+  /** Delete a thread and the messages in it. */
+  removeAgentThread(threadId: string): void {
+    const threads = this.materializeThreads();
+    const index = threads.findIndex((thread) => thread.id === threadId);
+    if (index < 0) return;
+    this.doc.getList(threadId).clear();
+    this.threads.delete(index, 1);
+    this.doc.commit({ origin: AGENT_ORIGIN });
+  }
+
+  /**
+   * Write the registry out if it is only being inferred, and return it — the
+   * same materialization `sheets` does, and for the same reason: starting a
+   * second thread must not leave the first one, the one with the conversation
+   * in it, unlisted.
+   */
+  private materializeThreads(): AgentThreadInfo[] {
+    const listed = this.threads.toArray().filter(isThread);
+    if (listed.length > 0) return listed;
+    const inferred = this.agentThreads();
+    for (const thread of inferred) this.threads.push(thread);
+    return inferred;
   }
 
   /* ---- the sheets -------------------------------------------------------- */
@@ -426,6 +538,16 @@ function isSheet(value: unknown): value is SheetInfo {
     typeof sheet?.id === "string" &&
     sheet.id.length > 0 &&
     typeof sheet.title === "string"
+  );
+}
+
+/** A thread entry a peer on a newer version may have written differently. */
+function isThread(value: unknown): value is AgentThreadInfo {
+  const thread = value as AgentThreadInfo | null;
+  return (
+    typeof thread?.id === "string" &&
+    thread.id.length > 0 &&
+    typeof thread.title === "string"
   );
 }
 

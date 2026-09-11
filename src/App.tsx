@@ -37,9 +37,10 @@ import { useMemoryRound } from "./ui/useMemoryRound";
 import { useKeymap } from "./ui/useKeymap";
 import { useConfig } from "./ui/useConfig";
 import { useTextBuffer } from "./ui/useTextBuffer";
-import { DEFAULT_MARK, DEFAULT_SUPPORT, type Argument } from "./model/types";
+import { DEFAULT_MARK, DEFAULT_SUPPORT, FOCUS_REACH, type Argument } from "./model/types";
 import { useAgent } from "./agent/useAgent";
 import { agentDraftRoots } from "./agent/draft";
+import { SIDEBAR_WIDTH, flowCollapsed, snapAgentWidth } from "./layout/panels";
 import { AgentPanel } from "./ui/AgentPanel";
 import { SpeechImportDialog } from "./ui/SpeechImportDialog";
 import { SpeechExportDialog } from "./ui/SpeechExportDialog";
@@ -62,6 +63,19 @@ import {
 
 const SPEECHES = POLICY_SPEECHES;
 
+/** Where the dragged width of the agent panel is remembered. */
+const AGENT_WIDTH_KEY = "flow.agent.width";
+const DEFAULT_AGENT_WIDTH = 360;
+
+function readAgentWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(AGENT_WIDTH_KEY));
+    return Number.isFinite(stored) && stored >= 280 ? stored : DEFAULT_AGENT_WIDTH;
+  } catch {
+    return DEFAULT_AGENT_WIDTH;
+  }
+}
+
 function App() {
   // The round arrives from the session rather than being made here, because it
   // is the session that replaces it when you join somebody's room. Alone, the
@@ -82,6 +96,20 @@ function App() {
   } = useSession(firstSheet);
   const [editor, setEditor] = useState(initialEditorState);
   const [agentOpen, setAgentOpen] = useState(false);
+  // How wide the agent sits, and whether it is over the flow instead of beside
+  // it. Kept here rather than in the panel because the panel is unmounted while
+  // it is closed, and a width you dragged should survive closing it.
+  const [agentWidth, setAgentWidth] = useState(readAgentWidth);
+  const [agentExpanded, setAgentExpanded] = useState(false);
+  // The window's own width. Read rather than assumed because what the panels
+  // leave for the flow — and so whether there is a flow — depends on it.
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+
+  useEffect(() => {
+    const measure = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
   const [speechImport, setSpeechImport] = useState<SpeechDocument | null>(null);
   const [speechImportError, setSpeechImportError] = useState<string | null>(null);
   const [speechExport, setSpeechExport] = useState<number | null>(null);
@@ -90,16 +118,40 @@ function App() {
 
   // The rail should disappear during a speech, not collapse into a permanent
   // sliver. ⌘J is a window-level command so it also works from its composer.
+  // ⇧⌘J is the other half of the same idea in the other direction: prep is not
+  // a rail, so it opens the agent over the whole flow.
   useEffect(() => {
     const toggleAgent = (event: KeyboardEvent) => {
       if (!event.metaKey || event.ctrlKey || event.altKey || event.key.toLowerCase() !== "j") return;
       event.preventDefault();
       event.stopPropagation();
-      if (!event.repeat) setAgentOpen((open) => !open);
+      if (event.repeat) return;
+      if (event.shiftKey) {
+        // Expanding from closed opens it expanded, rather than expanding a
+        // panel nobody can see.
+        setAgentExpanded((expanded) => (agentOpenRef.current ? !expanded : true));
+        setAgentOpen(true);
+        return;
+      }
+      setAgentOpen((open) => !open);
     };
     window.addEventListener("keydown", toggleAgent, true);
     return () => window.removeEventListener("keydown", toggleAgent, true);
   }, []);
+
+  // Read by the listener above, which is bound once and must not close over a
+  // stale answer to "is it open?".
+  const agentOpenRef = useRef(agentOpen);
+  agentOpenRef.current = agentOpen;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AGENT_WIDTH_KEY, String(Math.round(agentWidth)));
+    } catch {
+      // A webview with storage disabled loses the width between launches and
+      // nothing else; it is not worth failing a render over.
+    }
+  }, [agentWidth]);
 
   // Where the round is kept. Bound by `:open` or the first `:save`, and from
   // then on the flow is written out as it is taken down.
@@ -165,6 +217,23 @@ function App() {
   // The speeches the sheet is drawn in. A memory sheet has two columns — the
   // argument and the answers to it — where the round has the format's seven.
   const speeches = editor.memory ? MEMORY_SPEECHES : SPEECHES;
+
+  // How the window is shared out. `f` narrows the sheet to a speech and its
+  // neighbours, so a focused flow needs less room than a whole round — the
+  // count is what `focusRange` draws (see FlowSheet.tsx), not the format's.
+  const frame = useMemo(
+    () => ({
+      window: windowWidth,
+      zoom,
+      sidebar,
+      columns: focus === null ? speeches.length : Math.min(speeches.length, FOCUS_REACH * 2 + 1),
+    }),
+    [windowWidth, zoom, sidebar, focus, speeches.length],
+  );
+  // Whether the flow steps out and lets the panels have its width. Expanded,
+  // the agent is already drawn over the flow, so there is nothing to decide.
+  const agentShowing = agentOpen && !editor.memory;
+  const noFlow = !agentExpanded && flowCollapsed(frame, agentWidth, agentShowing);
 
   // What a keystroke does to the list on the left, on whichever substrate is
   // showing. On the memory sheet the list is your positions, so `:new` starts
@@ -533,32 +602,65 @@ function App() {
     // it by every metric the sheet is drawn at — see the `.app` block. The cast
     // is only because React's CSSProperties has no room for custom properties.
     <main
-      className={`app${sidebar ? "" : " app--no-sidebar"}`}
-      style={{ "--zoom": zoom } as CSSProperties}
+      className={`app${sidebar ? "" : " app--no-sidebar"}${noFlow ? " app--no-flow" : ""}`}
+      // `--sidebar-width` is handed to the stylesheet rather than written in
+      // it, because the arithmetic that decides whether a flow still fits has
+      // to use the same number the sheet list is actually drawn at.
+      style={{
+        "--zoom": zoom,
+        "--sidebar-width": `${SIDEBAR_WIDTH * zoom}px`,
+      } as CSSProperties}
     >
-      <Sidebar
-        label={editor.memory ? "positions" : "sheets"}
-        sheets={sheets}
-        activeSheet={activeSheet}
-        peers={peers}
-        onOpen={open}
-        onAdd={() => {
-          const id = sheetActions.add("untitled");
-          setEditor((s) => openSheet(s, activeSheet, id));
-        }}
-        onRename={sheetActions.rename}
-        // Dragging a row reorders the round, the same as ⌘[ and ⌘] — but the
-        // memory sheet's positions are alphabetical and nobody's to reorder,
-        // so there the rows don't drag at all.
-        onMove={editor.memory ? undefined : sheetActions.move}
-        onDelete={(sheetId) => {
-          // Same rule `:delete` follows — never the last sheet. The Sidebar
-          // already hides the button in that case; this is the backstop.
-          if (sheets.length > 1) sheetActions.remove(sheetId);
-        }}
-      />
+      <header className="workspace-bar">
+        <div className="workspace-bar__identity">
+          <button className="workspace-icon" aria-label="Toggle sidebar" aria-pressed={sidebar} onClick={() => setEditor(s => ({ ...s, sidebar: !s.sidebar }))}>☰</button>
+          <span className="workspace-title">{sheets.find(sheet => sheet.id === activeSheet)?.title || "Untitled"}</span>
+          <span className="workspace-badge">{editor.memory ? "Memory" : "Policy debate"}</span>
+        </div>
+        <div className="workspace-bar__actions">
+          <button onClick={() => library.open()}>Open</button>
+          <button onClick={() => library.save()}>Save round</button>
+          <button className={agentShowing ? "is-selected" : ""} aria-pressed={agentShowing} onClick={() => { setEditor(s => ({ ...s, memory: false })); setAgentOpen(open => !open); }}>✧ <span>Agent</span><kbd>⌘J</kbd></button>
+        </div>
+      </header>
+      {!editor.memory && agentOpen ? (
+        <Sidebar
+          onHelp={() => setEditor(s => ({ ...s, help: true }))}
+          label="threads"
+          sheets={agent.threads}
+          activeSheet={agent.activeThread}
+          peers={[]}
+          onOpen={agent.selectThread}
+          onAdd={() => agent.selectThread(null)}
+          onRename={agent.renameThread}
+          onDelete={agent.deleteThread}
+          allowDeleteLast
+        />
+      ) : (
+        <Sidebar
+          onHelp={() => setEditor(s => ({ ...s, help: true }))}
+          label={editor.memory ? "positions" : "sheets"}
+          sheets={sheets}
+          activeSheet={activeSheet}
+          peers={peers}
+          onOpen={open}
+          onAdd={() => {
+            const id = sheetActions.add("untitled");
+            setEditor((s) => openSheet(s, activeSheet, id));
+          }}
+          onRename={sheetActions.rename}
+          onMove={editor.memory ? undefined : sheetActions.move}
+          onDelete={(sheetId) => {
+            if (sheets.length > 1) sheetActions.remove(sheetId);
+          }}
+        />
+      )}
 
       <div className="app__flow">
+        <div className="flow-toolbar">
+          <div><span className="flow-toolbar__dot" />{editor.memory ? "Your positions" : "Round workspace"}<span className="flow-toolbar__meta">{sheets.length} {sheets.length === 1 ? "sheet" : "sheets"}</span></div>
+          <button aria-pressed={focus !== null} onClick={() => setEditor(s => ({ ...s, focus: s.focus === null ? (column ?? 0) : null }))}>{focus === null ? "Focus speech" : "Show all speeches"}</button>
+        </div>
         <FlowSheet
           roots={roots}
           placed={placed}
@@ -580,22 +682,18 @@ function App() {
         <AgentPanel
           open={agentOpen}
           agent={agent}
-          roots={roots}
-          speeches={speeches}
-          sheets={sheets}
-          activeSheet={activeSheet}
-          selected={cursorId}
-          onOpenSheet={(id) => { stopEditing(); open(id); }}
-          onSelect={(id) => {
-            stopEditing();
-            if (flow?.has(id)) setEditor(s => moveCursorTo(s, flow, id, placed));
-          }}
-          onSave={(id, before, text) => {
-            if (!flow?.has(id)) return "This argument was deleted. Copy your text before closing.";
-            if (flow.textOf(id) !== before) return "This argument changed elsewhere. Copy your text, cancel, and reopen to review the latest version.";
-            flow.setText(id, text);
-            return null;
-          }}
+          width={agentWidth}
+          onWidthChange={(next) => setAgentWidth(snapAgentWidth(frame, next))}
+          expanded={agentExpanded}
+          onExpandedChange={setAgentExpanded}
+          profiles={Object.entries(config.aiProfiles).map(([name, item]) => ({
+            name,
+            provider: item.provider,
+            model: item.model,
+            subscription: item.api.endsWith("-subscription"),
+          }))}
+          profile={config.aiProfile}
+          onProfileChange={config.selectAiProfile}
           onToggle={() => setAgentOpen((open) => !open)}
           onImportFolder={memory.importFrom}
           onImportFile={memory.importFile}

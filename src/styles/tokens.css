@@ -60,6 +60,8 @@
      thing in the palette that didn't have to change. */
   --band-aff: var(--sheet);
   --band-neg: #ebebeb;
+  --aff-fg: #8a4d52;
+  --neg-fg: #496887;
 
   /* The strongest ink on the sheet, and the cursor's own. Named `accent`
      because of the job it does — the one thing allowed to stand out — rather
@@ -151,6 +153,8 @@
   :root {
     --sheet: #1a1a1a;
     --band-neg: #242424;
+    --aff-fg: #dda1a5;
+    --neg-fg: #9dbddd;
     --argument-fg: #e4e4e4;
     --argument-border: #575757;
     --rule: #2e2e2e;

@@ -6,35 +6,16 @@ import React, {
   useState,
   type CSSProperties,
 } from "react";
-import { layoutFlow, markerOf, measureRows } from "../layout/grid";
+import { layoutFlow, measureRows } from "../layout/grid";
 import { selectionRange, threadOf } from "../layout/navigate";
 import { FOCUS_REACH, type Argument, type Placed, type Speech } from "../model/types";
 import type { Peer } from "../sync/presence";
 import type { AgentDraft } from "../agent/types";
 import { agentDraftRoots } from "../agent/draft";
 
-/**
- * The gap between one argument and the next, in the sheet's authored pixels.
- *
- * It lives here rather than in the stylesheet because the row heights are
- * computed, not authored: `measureRows` has to count the gaps a spanning
- * argument covers. The column gap is pure presentation and stays in CSS.
- *
- * Four rather than the two it was, which is the difference between a column
- * that reads as a list of arguments and one that reads as a paragraph: at
- * 10px type the leading inside a wrapped argument is already a couple of
- * pixels, so a two-pixel gap made "the next line of this argument" and "the
- * next argument" the same distance apart. It is the only thing on the sheet
- * separating them — an argument is bare text with a rule down its left, and
- * the rule is spoken for three times over (see sheet.css).
- */
-const ROW_GAP = 4;
+/** A little separation between arguments without opening up the dense flow. */
+const ROW_GAP = 2;
 
-/**
- * Zoom scales the sheet through a CSS custom property (see the stylesheet), but
- * the row gap can't ride along with it: `measureRows` does arithmetic with it,
- * so it has to be a number rather than something left for CSS to resolve.
- */
 const scaled = (px: number, zoom: number) => px * zoom;
 
 /**
@@ -167,11 +148,6 @@ export function FlowSheet({
     [placed, cursorId, column],
   );
 
-  // Whether the cursor is standing in a column rather than on an argument, and
-  // that column is one of the ones being drawn.
-  const vacantCol =
-    cursorCol !== null && !placed.some((p) => p.id === cursorId) ? cursorCol : null;
-
   const byId = useMemo(() => {
     const m = new Map<string, Argument>();
     const walk = (n: Argument) => {
@@ -227,7 +203,6 @@ export function FlowSheet({
   };
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [rowHeights, setRowHeights] = useState<number[]>([]);
-
   const rowGap = scaled(ROW_GAP, zoom);
 
   // The range `focus` draws, clamped to the sheet — see `focusRange`. Computed
@@ -261,14 +236,7 @@ export function FlowSheet({
         const el = cellRefs.current.get(p.id);
         if (!el) continue;
         const height = el.getBoundingClientRect().height;
-        // Row 0 pads itself down by `rowGap` to stay flush with the header
-        // rule (see the cell's own style, below) — that padding is real
-        // border-box height, so left in here it inflates row 0's track by
-        // `rowGap` more than the cell actually occupies, and the difference
-        // shows up as a stray gap between row 0 and row 1. Taken back out
-        // before it reaches `measureRows`.
-        const flush = p.row === 0 && inFocus(p.col, range) ? rowGap : 0;
-        heights.set(p.id, height - flush);
+        heights.set(p.id, height);
       }
       const next = measureRows(placed, heights, rowGap);
       setRowHeights((prev) =>
@@ -279,20 +247,18 @@ export function FlowSheet({
     };
 
     remeasure();
-    // Column width drives text wrapping, which drives height — re-measure on resize.
+    // Observe cells too: local expand/collapse and editor changes can shrink
+    // content without resizing the grid, whose tracks retain measured minima.
     const ro = new ResizeObserver(remeasure);
     if (gridRef.current) ro.observe(gridRef.current);
+    for (const el of cellRefs.current.values()) ro.observe(el);
     return () => ro.disconnect();
     // `range` is a dependency and the observer cannot stand in for it: changing
     // it redistributes width *between* columns without changing the grid's own
     // size, so nothing resizes and the rows would keep the heights they were
     // given at the previous set of column widths.
     //
-    // `rowGap` carries zoom, and it is a dependency for the same reason, more
-    // sharply: zooming changes every argument's height but not the grid's
-    // width, and the grid's own height is whatever these row tracks say it is
-    // — so the observer would be waiting on a resize that only this effect can
-    // cause. Left out, the sheet would change type size and keep the old rows.
+    // Zoom also changes cell metrics even when the viewport stays the same.
   }, [placed, range, rowGap]);
 
   // Keep the cursor on screen. `nearest` means this only scrolls when the
@@ -379,23 +345,13 @@ export function FlowSheet({
           className={`flow-header is-${speeches[i].side}${
             i === cursorCol ? " is-current" : ""
           }`}
-          style={{ gridColumn: colPos.get(i) }}
+          // Cancel the grid gap immediately below the headers. Argument rows
+          // still keep the gap between one another.
+          style={{ gridColumn: colPos.get(i), marginBottom: `${-rowGap}px` }}
         >
           {speeches[i].label}
         </div>
       ))}
-
-      {/* A rule across the sheet wherever a new argument starts, so separate
-          positions read as separate rather than as one long column. */}
-      {placed
-        .filter((p) => p.depth === 0 && p.row > 0)
-        .map((p) => (
-          <div
-            key={`r-${p.id}`}
-            className="flow-rule"
-            style={{ gridColumn: "1 / -1", gridRow: p.row + 1 + headerOffset }}
-          />
-        ))}
 
       {/* The selection, one band from the first selected argument to the last
           — a `gridRow` range rather than `span`, so it covers the row gaps
@@ -417,23 +373,11 @@ export function FlowSheet({
         />
       )}
 
-      {/* The cursor with no argument under it: the top of a speech nobody has
-          written in yet. An empty box rather than a placeholder word, because
-          nothing is there — what it says is "you are here, and `n` writes the
-          first argument", which is exactly what an argument-shaped hole says. */}
-      {vacantCol !== null && inFocus(vacantCol, range) && (
-        <div
-          className="flow-cell flow-cell--vacant is-cursor"
-          style={{ gridColumn: colPos.get(vacantCol), gridRow: 1 + headerOffset }}
-        />
-      )}
-
       {placed
         // Out-of-focus columns aren't drawn at all — see `visibleCols` above.
         .filter((p) => inFocus(p.col, range))
         .map((p) => {
           const arg = byId.get(p.id)!;
-          const marker = markerOf(p.index, arg.mark);
           // Somebody else's cursor, if one is here. Their cursor is drawn the
           // way yours is — the rule, the wash, the hairline — in their colour
           // instead of the accent, so "where is my partner" is answered by
@@ -453,7 +397,7 @@ export function FlowSheet({
               // so that the number is inside the highlight — see the
               // stylesheet. Selection itself isn't a per-cell class any more
               // — see `.flow-selection`, above.
-              className={`flow-cell${p.id === cursorId ? " is-cursor" : ""}${
+              className={`flow-cell is-${speeches[p.col].side}${p.id === cursorId ? " is-cursor" : ""}${
                 thread.has(p.id) ? " is-thread" : ""
               }${arg.support === "analytic" ? " is-analytic" : ""}${
                 peer ? " is-peer" : ""
@@ -466,18 +410,6 @@ export function FlowSheet({
               style={{
                 gridColumn: colPos.get(p.col),
                 gridRow: `${p.row + 1 + headerOffset} / span ${p.span}`,
-                // Row 0 sits a row-gap short of the header's own underline —
-                // pulled up by exactly that gap and padded back down by the
-                // same amount, so the rule down its left reaches the line
-                // instead of stopping short of it, and the text lands where it
-                // always did. The measure takes the padding back out again
-                // (see `flush`, above), which is what keeps the track the
-                // height of the argument and the gap below it the same as
-                // every other argument's.
-                ...(p.row === 0 && {
-                  marginTop: `${-rowGap}px`,
-                  paddingTop: `${rowGap}px`,
-                }),
                 // The peer's own colour, handed to the stylesheet — it is per
                 // peer, so it cannot be authored there. See peers.css.
                 ...(peer && ({ "--peer": peer.color } as CSSProperties)),
@@ -486,7 +418,6 @@ export function FlowSheet({
               {/* Only when there is one to draw. The mark is text now — it
                   takes the room its characters need and no more — so an
                   unmarked argument simply starts with its first word. */}
-              {marker && <span className="flow-num">{marker}</span>}
               {draftIndex.has(p.id) ? (
                 <div className="flow-argument flow-argument--agent" aria-live="polite">
                   {arg.text || (draftIndex.get(p.id)?.draft.status === "error" ? draftIndex.get(p.id)?.draft.error : "thinking…")}
@@ -499,32 +430,7 @@ export function FlowSheet({
           );
         })}
 
-      {/* A sheet with nothing on it yet. `:new` opens one mid-round, and what
-          it opens onto is seven empty columns and no cursor — nothing on
-          screen to say that a key would do anything, on the app's most modal
-          surface. So the two that matter go in the slot the first argument
-          will take, which is the one place a hint can sit without costing the
-          flow anything: it is gone the moment there is a flow. */}
-      {placed.length === 0 && (
-        <dl
-          className="flow-empty"
-          style={{ gridColumn: colPos.get(visibleCols[0] ?? 0) ?? 1, gridRow: 2 }}
-        >
-          {/* Key against gloss, the same shape the keymap panel uses, because
-              the second of these is how you get to that panel and the two
-              should read as the same kind of writing. A line apiece rather
-              than one sentence: a speech column is about twenty-five
-              characters wide, and a sentence wraps in the middle of itself. */}
-          <dt>
-            <kbd>n</kbd>
-          </dt>
-          <dd>starts an argument</dd>
-          <dt>
-            <kbd>:?</kbd>
-          </dt>
-          <dd>what the keys do</dd>
-        </dl>
-      )}
+
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   readConfig,
   type Config,
 } from "../editor/config";
+import type { AiConfig } from "../agent/types";
 
 /**
  * The keys, as the user has them, and the one thing you can do to them.
@@ -21,6 +22,7 @@ export interface Configuration extends Config {
    * as a failure.
    */
   note: string | null;
+  selectAiProfile: (name: string) => void;
   /** Write the defaults out, where there is no config yet. See `:config`. */
   seed: () => void;
 }
@@ -41,6 +43,7 @@ export interface Configuration extends Config {
  */
 export function useConfig(): Configuration {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+  const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   /**
@@ -100,5 +103,14 @@ export function useConfig(): Configuration {
     );
   }, []);
 
-  return { ...config, note, seed };
+  const builtins: Record<string, AiConfig> = canRemember() ? {
+    "Codex subscription": { provider: "codex", router: "local", api: "codex-subscription", model: "default" },
+    "Claude subscription": { provider: "claude", router: "local", api: "claude-subscription", model: "default" },
+  } : {};
+  const aiProfiles = { ...builtins, ...config.aiProfiles };
+  const fallback = config.aiProfile ?? (canRemember() ? "Codex subscription" : null);
+  const aiProfile = selectedProfile && Object.prototype.hasOwnProperty.call(aiProfiles, selectedProfile)
+    ? selectedProfile : fallback;
+  return { ...config, aiProfiles, aiProfile, ai: aiProfile ? aiProfiles[aiProfile] : null,
+    selectAiProfile: setSelectedProfile, note, seed };
 }

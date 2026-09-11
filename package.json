@@ -18,6 +18,8 @@
     "loro-crdt": "^1.13.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "vitest": "^4.1.11",
     "ws": "^8.21.2"
   },
