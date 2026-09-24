@@ -12,6 +12,7 @@ const request: AgentRequest = {
   debate: [],
   history: [{ id: "m", role: "user", content: "prioritize turns", createdAt: "now" }],
   context: [{ source: "politics.cmir", position: "Politics", key: "uniqueness", argument: "uniqueness", answers: ["ahead"] }],
+  contextSources: [{ source: "politics.cmir", blockCount: 1 }],
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -48,12 +49,14 @@ describe("OpenAI-compatible provider", () => {
     const call = vi.mocked(fetch).mock.calls[0];
     const body = JSON.parse(String(call[1]?.body));
     const prompt = body.messages.map((message: { content: string }) => message.content).join("\n");
-    expect(prompt).toContain("exactly three distinct");
+    expect(prompt).toContain("number of distinct direct responses you judge strategically useful");
     expect(prompt).toContain("45 words");
     expect(prompt).toContain("JSON array");
+    expect(prompt).toContain("brand-new argument from the immediately preceding speech");
     expect(body.messages[0].content).toContain("persistent strategy assistant");
     expect(body.messages[1].content).toBe("prioritize turns");
     expect(body.messages[2].content).toContain("politics.cmir");
+    expect(body.messages[2].content).toContain("Imported workspace files available to this request");
     expect(body.max_tokens).toBe(321);
   });
 });

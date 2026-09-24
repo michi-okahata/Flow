@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   canRemember,
-  memorize,
   readMemorized,
   type Block,
   type ImportedFile,
 } from "../memory/store";
-import { argumentKey, indexOf, recall as recallIn, type Recall } from "../memory/recall";
+import { indexOf, recall as recallIn, type Recall } from "../memory/recall";
 import { blocksOf, countOf, filesIn, scan, scanFile } from "../memory/cmir";
 import { folderName, pickDirectory, pickFile } from "../files/disk";
 
@@ -38,12 +37,6 @@ export interface Memory {
    */
   recall: (argument: string, position: string) => Recall;
   /**
-   * Memorize these answers to this argument, replacing whatever was there. No
-   * answers forgets it. Always one of your own blocks: a file's are not
-   * something `m` can write and not something it can delete.
-   */
-  keep: (position: string, argument: string, answers: string[]) => void;
-  /**
    * Read a folder of CardMirror or Word files and file every block in it. Asks where.
    * Replaces whatever was read out of that folder last time.
    */
@@ -68,8 +61,7 @@ export interface Memory {
   /**
    * What went wrong last, if anything. A browser tab, which has no home
    * directory to keep a `.flow` in, reports itself here the first time you
-   * press `m` rather than by making the key do nothing — the same way
-   * `useLibrary` answers `:save`.
+   * use an import command, rather than failing silently.
    */
   error: string | null;
   /**
@@ -108,48 +100,12 @@ export function useMemory(): Memory {
     };
   }, []);
 
-  // Read at call time rather than closed over, so that `keep` doesn't have to
-  // be rebuilt — and the keymap resubscribed — every time a block changes. Same
-  // reason `useLibrary` holds the round in a ref.
-  const mineRef = useRef(memorized);
-  mineRef.current = memorized;
   const theirsRef = useRef(imported);
   theirsRef.current = imported;
 
-  const keep = useCallback((position: string, argument: string, answers: string[]) => {
-    const key = argumentKey(argument);
-    // An argument with no text of its own is not something answers can be found
-    // by later, so there is nothing to memorize them under.
-    if (!key) return;
-    if (!canRemember()) {
-      setError("memorizing needs the desktop app");
-      return;
-    }
-
-    const lines = answers.map((answer) => answer.trim()).filter(Boolean);
-    const at = position.trim();
-    // Applied here first and written after: `m` is pressed mid-speech and the
-    // status line has to answer immediately. A failed write puts the list back
-    // rather than leaving the screen claiming something the disk doesn't say.
-    const before = mineRef.current;
-    setMemorized((prev) => {
-      const rest = prev.filter((block) => !(block.key === key && block.position === at));
-      return lines.length === 0
-        ? rest
-        : [...rest, { source: "", position: at, key, argument: argument.trim(), answers: lines }];
-    });
-    memorize(at, key, argument.trim(), lines).then(
-      () => setError(null),
-      (reason) => {
-        setMemorized(before);
-        setError(String(reason));
-      },
-    );
-  }, []);
-
   /**
-   * Read a folder in. Not optimistic the way `keep` is — this is a deliberate
-   * act with a dialog in front of it, so it reads the selected files before
+   * Read a folder in. This is a deliberate act with a dialog in front of it,
+   * so it reads the selected files before
    * replacing that folder's previous contents in the current workspace.
    */
   const importFrom = useCallback(async () => {
@@ -235,7 +191,6 @@ export function useMemory(): Memory {
       imported,
       contextFor,
       recall,
-      keep,
       importFrom: () => void importFrom(),
       importFile: () => void importFile(),
       forget: () => void forget(),
@@ -244,7 +199,7 @@ export function useMemory(): Memory {
       error,
       note,
     }),
-    [memorized, imported, contextFor, recall, keep, importFrom, importFile, forget, refresh, report, error, note],
+    [memorized, imported, contextFor, recall, importFrom, importFile, forget, refresh, report, error, note],
   );
 }
 

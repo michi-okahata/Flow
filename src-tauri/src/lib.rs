@@ -97,6 +97,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             agent::agent_cli_complete,
+            agent::agent_codex_rate_limits,
             relay_start,
             relay_stop,
             relay_info,

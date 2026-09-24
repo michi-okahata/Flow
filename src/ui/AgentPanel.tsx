@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { invoke } from "@tauri-apps/api/core";
 import type { AgentControls } from "../agent/useAgent";
 import type { AgentMessage, AgentStep } from "../agent/types";
 
@@ -46,9 +47,24 @@ export function AgentPanel({
   onImportFile,
 }: AgentPanelProps): React.ReactElement {
   const [text, setText] = useState("");
+  const [usage, setUsage] = useState<string | null>(null);
   const end = useRef<HTMLDivElement | null>(null);
   const composer = useRef<HTMLTextAreaElement | null>(null);
   const thread = agent.thread;
+  const selectedProfile = profiles.find(item => item.name === profile);
+
+  useEffect(() => {
+    if (!open || !selectedProfile?.subscription || selectedProfile.provider !== "codex") {
+      setUsage(null);
+      return;
+    }
+    let live = true;
+    invoke<unknown>("agent_codex_rate_limits").then(
+      result => { if (live) setUsage(formatUsage(result)); },
+      () => { if (live) setUsage(null); },
+    );
+    return () => { live = false; };
+  }, [open, selectedProfile?.provider, selectedProfile?.subscription, agent.running]);
 
   useEffect(() => {
     if (open) end.current?.scrollIntoView({ block: "nearest" });
@@ -142,7 +158,8 @@ export function AgentPanel({
       </header>
 
       <div className="agent-panel__context">
-        <span>{agent.importedCount} evidence blocks available</span>
+        <span>{agent.importedCount} workspace blocks</span>
+        {usage && <span className="agent-panel__usage" title="Codex subscription usage">{usage}</span>}
         <button
           type="button"
           className="agent-panel__import"
@@ -158,6 +175,7 @@ export function AgentPanel({
         {thread?.running && (
           <article className="agent-panel__message is-assistant is-streaming">
             <span className="agent-panel__who">agent</span>
+            <ContextBlocks steps={thread.steps} />
             <Steps steps={thread.steps} />
             {thread.draft
               ? <div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml>{thread.draft}</Markdown></div>
@@ -228,11 +246,26 @@ function Turn({ message }: { message: AgentMessage }): React.ReactElement {
         {message.role === "user" ? "›" : "agent"}
         {message.error && <em className="agent-panel__badge">{message.error}</em>}
       </span>
+      {message.role === "assistant" && message.steps ? <ContextBlocks steps={message.steps} /> : null}
       {message.steps?.length ? <Steps steps={message.steps} /> : null}
       {message.content && (
         <div className="agent-markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</Markdown></div>
       )}
     </article>
+  );
+}
+
+function ContextBlocks({ steps }: { steps: AgentStep[] }): React.ReactElement | null {
+  const blocks = steps
+    .filter(step => step.name === "read_context" && step.status === "done" && step.detail)
+    .map(step => ({ id: String(step.arguments.context_id ?? step.id), label: step.detail! }));
+  const unique = blocks.filter((block, index) => blocks.findIndex(other => other.id === block.id) === index);
+  if (!unique.length) return null;
+  return (
+    <div className="agent-context-used" aria-label="workspace blocks used">
+      <span>context</span>
+      {unique.map(block => <span key={block.id} title={block.label}>{block.label}</span>)}
+    </div>
   );
 }
 
@@ -242,6 +275,26 @@ function FileIcon(): React.ReactElement {
 
 function FolderIcon(): React.ReactElement {
   return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4h5l1.5 2h6.5v7.5h-13zM1.5 4V2.5h4L7 4" /></svg>;
+}
+
+function formatUsage(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const result = value as Record<string, unknown>;
+  const byId = result.rateLimitsByLimitId;
+  const limits = byId && typeof byId === "object"
+    ? Object.values(byId as Record<string, unknown>)[0]
+    : result.rateLimits;
+  if (!limits || typeof limits !== "object") return null;
+  const item = limits as Record<string, unknown>;
+  const windows = [item.primary, item.secondary].filter(window => window && typeof window === "object") as Record<string, unknown>[];
+  const labels = windows.map(window => {
+    const used = typeof window.usedPercent === "number" ? window.usedPercent : null;
+    const mins = typeof window.windowDurationMins === "number" ? window.windowDurationMins : null;
+    if (used === null) return null;
+    const period = mins === null ? "usage" : mins >= 7 * 24 * 60 ? "week" : mins >= 60 ? `${Math.round(mins / 60)}h` : `${mins}m`;
+    return `${period} ${Math.max(0, Math.round(100 - used))}% left`;
+  }).filter(Boolean);
+  return labels.length ? labels.join(" · ") : null;
 }
 
 /** The tool calls of one turn. Collapsed to a line each: the name, the target,

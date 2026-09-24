@@ -19,8 +19,7 @@
    gaps between arguments, the run of sheet below the last argument.
 
    Painted by an element rather than by the grid's background so it tracks the
-   column tracks exactly, focus mode included: the speeches left on screen
-   share the sheet out again, and each band takes its column's new width.
+   fixed column tracks exactly while the sheet scrolls.
 
    Exactly its track, edge to edge — the tracks are flush, so the bands meet
    with nothing between them and every column has the same visible left edge

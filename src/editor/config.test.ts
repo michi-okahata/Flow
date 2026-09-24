@@ -77,6 +77,18 @@ describe("key config", () => {
     expect(config.keys.q).toBe("down");
     expect(config.problems).toEqual([]);
   });
+
+  it("moves the old m shortcut from memorize to important", () => {
+    const config = readConfig(JSON.stringify({ keys: { m: "memorize" } }));
+    expect(config.keys.m).toBe("important");
+    expect(config.problems).toEqual([]);
+  });
+
+  it("drops the retired focus shortcut from old configs", () => {
+    const config = readConfig(JSON.stringify({ keys: { f: "focus" } }));
+    expect(config.keys.f).toBeUndefined();
+    expect(config.problems).toEqual([]);
+  });
 });
 
 it("selects a named model and preserves independent API settings", () => {

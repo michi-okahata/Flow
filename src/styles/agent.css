@@ -102,7 +102,8 @@
   border-bottom: 1px solid var(--rule);
 }
 
-.agent-panel__context span { flex: 1; }
+.agent-panel__context > span:first-child { flex: 1; }
+.agent-panel__usage { color: var(--muted); white-space: nowrap; }
 .agent-panel__context button { padding: 0; }
 .agent-panel__context .agent-panel__import {
   display: grid;
@@ -143,6 +144,27 @@
 .agent-panel__message.is-user { padding-left: 0; }
 .agent-panel__message.is-user p { color: var(--muted); }
 .agent-panel__thinking { margin: 0; }
+
+.agent-context-used {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(4px * var(--zoom));
+  margin: 0 0 calc(6px * var(--zoom));
+  color: var(--muted);
+  font: calc(9px * var(--zoom)) var(--font-mono);
+}
+
+.agent-context-used > span:not(:first-child) {
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: calc(2px * var(--zoom)) calc(5px * var(--zoom));
+  border-radius: calc(4px * var(--zoom));
+  background: var(--band-neg);
+  color: var(--argument-fg);
+}
 
 .agent-panel__composer {
   flex: none;

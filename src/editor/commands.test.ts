@@ -142,7 +142,7 @@ describe("numeric prefixes", () => {
       placed: [],
       speeches: POLICY_SPEECHES,
       sheets: { list: round.sheets(), active: sheet, open: () => {}, move: () => {} },
-      memory: { recall: () => ({ block: null }), keep: () => {} },
+      memory: { recall: () => ({ block: null }) },
     };
   }
 

@@ -3,6 +3,7 @@ import { keyOf, repeatsWhileHeld, run, runsWhileEditing } from "../editor/comman
 import { selectionRange } from "../layout/navigate";
 import type { CommandContext, EditorState } from "../editor/state";
 import type { AgentDraft } from "../agent/types";
+import { copiedText, writeClipboard } from "../editor/clipboard";
 
 interface AgentKeys {
   drafts: AgentDraft[];
@@ -114,19 +115,28 @@ export function useKeymap(
       const key = keyOf(e);
       const tag = (e.target as HTMLElement).tagName;
 
-      // A shadow answer owns only its two explicit decisions. Other keys keep
-      // navigating the sheet without silently accepting or throwing it away.
+      // A shadow answer owns only its two explicit decisions. Tab accepts the
+      // shadow under the cursor; elsewhere Tab starts another independent
+      // answer request, even while earlier requests are still running.
       const shadow = agent?.drafts.find((draft) =>
         state.cursorId?.startsWith(`agent-draft:${draft.requestId}:`),
       );
-      if (agent && agent.drafts.length && key === "Tab") {
-        const id = agent.accept(shadow?.requestId);
+      if (agent && shadow && key === "Tab") {
+        const id = agent.accept(shadow.requestId);
         e.preventDefault();
         if (id) setEditor((s) => ({ ...s, cursorId: id, editingId: null, column: null }));
         return;
       }
-      if (agent && agent.drafts.length && key === "Escape") {
-        agent.dismiss(shadow?.requestId);
+      if (agent && shadow && key === "Escape") {
+        agent.dismiss(shadow.requestId);
+        e.preventDefault();
+        return;
+      }
+      if (agent && shadow && keys[key] === "copy") {
+        const parts = state.cursorId?.split(":") ?? [];
+        const index = Number(parts[parts.length - 1]);
+        const text = Number.isInteger(index) ? shadow.answers[index] : "";
+        if (text) writeClipboard(text);
         e.preventDefault();
         return;
       }
@@ -144,6 +154,15 @@ export function useKeymap(
       if (state.editingId || tag === "INPUT" || tag === "TEXTAREA") {
         if (!state.editingId || !runsWhileEditing(key, keys)) return;
         flushText();
+      }
+
+      if (agent && key === "Tab") {
+        const selected = state.selectAnchor
+          ? selectionRange(placed, state.selectAnchor, state.cursorId).map((p) => p.id)
+          : state.cursorId ? [state.cursorId] : [];
+        if (selected.length && !e.repeat) agent.generate(selected);
+        e.preventDefault();
+        return;
       }
 
       // The system's own repeat, which this stands in for: swallowed, so a
@@ -181,6 +200,9 @@ export function useKeymap(
       if (!next) return;
       e.preventDefault();
       setEditor(next);
+      if (keys[key] === "copy" && next.yanked) {
+        writeClipboard(copiedText(next.yanked));
+      }
 
       if (!repeatsWhileHeld(key, keys)) return;
       const entry: { key: string; delay?: number; tick?: number } = { key };

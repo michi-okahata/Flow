@@ -30,6 +30,8 @@ interface ArgumentEditorProps {
   keys: Record<string, string>;
   /** Called as the user types, for the throttled write into the flow. */
   onChange: (text: string) => void;
+  /** A multiline clipboard paste, split into complete sibling arguments. */
+  onPasteBlocks: (blocks: string[]) => void;
   /** Escape, Enter, or focus loss: flush and leave edit mode. */
   onDone: () => void;
 }
@@ -40,6 +42,7 @@ export function ArgumentEditor({
   dictionary,
   keys,
   onChange,
+  onPasteBlocks,
   onDone,
 }: ArgumentEditorProps): React.ReactElement {
   // Local state, so a keystroke shows up now rather than after a round trip
@@ -94,6 +97,15 @@ export function ArgumentEditor({
         autoFocus
         value={text}
         onChange={(e) => write(e.currentTarget.value, e.currentTarget.selectionStart)}
+        onPaste={(e) => {
+          const pasted = e.clipboardData.getData("text/plain");
+          if (!/\r?\n/.test(pasted)) return;
+          e.preventDefault();
+          const blocks = blocksFromPaste(text, e.currentTarget.selectionStart, e.currentTarget.selectionEnd, pasted);
+          setText(blocks[0]);
+          setCaret(blocks[0].length);
+          onPasteBlocks(blocks);
+        }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
         onBlur={onDone}
         onKeyDown={(e) => {
@@ -115,4 +127,13 @@ export function ArgumentEditor({
       />
     </div>
   );
+}
+
+export function blocksFromPaste(text: string, start: number, end: number, pasted: string): string[] {
+  const lines = pasted.replace(/\r\n?/g, "\n").split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+  if (lines.length === 1) return [`${before}${lines[0]}${after}`];
+  return [`${before}${lines[0]}`, ...lines.slice(1, -1), `${lines[lines.length - 1] ?? ""}${after}`];
 }

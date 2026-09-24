@@ -1,6 +1,6 @@
 import { POLICY_SPEECHES } from "../model/format";
 import type { Flow } from "../model/flow";
-import type { AgentToolCall } from "./types";
+import type { AgentContextBlock, AgentContextSource, AgentToolCall } from "./types";
 
 /**
  * The sole bridge from an agent decision into the document. Agent code never
@@ -115,11 +115,86 @@ export function executeChatTool(round: Round, name: string, args: Record<string,
   throw new Error("Argument no longer exists");
 }
 
+/** Search imported workspace material without placing its bodies in every
+ * prompt. IDs are scoped to the captured import list for this turn. */
+export function executeContextTool(
+  blocks: AgentContextBlock[],
+  name: string,
+  args: Record<string, unknown>,
+): unknown {
+  if (name === "list_context_sources") {
+    return contextSourcesOf(blocks).map(({ source, blockCount }) => ({ source, block_count: blockCount }));
+  }
+  if (name === "search_context") {
+    const query = stringField(args, "query").trim().toLowerCase();
+    if (!query) throw new Error("Search query is empty");
+    const position = typeof args.position === "string" ? args.position.trim().toLowerCase() : "";
+    const limit = Math.max(1, Math.min(20, Number.isInteger(args.limit) ? Number(args.limit) : 8));
+    const words = new Set(query.match(/[a-z0-9]{3,}/g) ?? []);
+    return blocks.map((block, index) => {
+      const metadata = `${block.position} ${block.key} ${block.argument} ${block.answers.join(" ")}`.toLowerCase();
+      const body = (block.context ?? []).join("\n").toLowerCase();
+      let score = position && block.position.toLowerCase() === position ? 8 : 0;
+      if (metadata.includes(query)) score += 12;
+      if (body.includes(query)) score += 8;
+      for (const word of words) {
+        if (metadata.includes(word)) score += 3;
+        else if (body.includes(word)) score += 1;
+      }
+      return { block, index, score };
+    }).filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .slice(0, limit)
+      .map(({ block, index }) => ({
+        context_id: `context:${index}`,
+        source: block.source,
+        position: block.position,
+        key: block.key,
+        argument: block.argument.slice(0, 500),
+        answer_previews: block.answers.slice(0, 5).map(answer => answer.slice(0, 240)),
+      }));
+  }
+  if (name === "read_context") {
+    const match = /^context:(\d+)$/.exec(stringField(args, "context_id"));
+    if (!match) throw new Error("Invalid context ID");
+    const block = blocks[Number(match[1])];
+    if (!block) throw new Error("Context block no longer exists");
+    const offset = Number.isInteger(args.offset) ? Math.max(0, Number(args.offset)) : 0;
+    const material = JSON.stringify({
+      argument: block.argument,
+      answers: block.answers,
+      evidence: block.context ?? [],
+    });
+    const chunkSize = 6000;
+    const content = material.slice(offset, offset + chunkSize);
+    return {
+      context_id: stringField(args, "context_id"),
+      source: block.source,
+      position: block.position,
+      key: block.key,
+      argument: block.argument,
+      content,
+      next_offset: offset + chunkSize < material.length ? offset + chunkSize : null,
+    };
+  }
+  throw new Error(`Unknown context tool: ${name}`);
+}
+
+/** File names and sizes are cheap enough to include on every request. */
+export function contextSourcesOf(blocks: AgentContextBlock[]): AgentContextSource[] {
+  const counts = new Map<string, number>();
+  for (const block of blocks) counts.set(block.source, (counts.get(block.source) ?? 0) + 1);
+  return [...counts].map(([source, blockCount]) => ({ source, blockCount }));
+}
+
 const tool = (name: string, description: string, properties: Record<string, unknown>, required: string[]) => ({ type: "function", function: { name, description, parameters: { type: "object", properties, required, additionalProperties: false } } });
 const str = { type: "string" };
 const nullableId = { type: ["string", "null"] };
 const integer = { type: "integer", minimum: 0 };
 export const CHAT_TOOLS = [
+  tool("list_context_sources", "List imported workspace files and their block counts without reading their contents.", {}, []),
+  tool("search_context", "Search imported workspace evidence. Returns compact matches and context IDs; call read_context only for relevant matches.", { query: str, position: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 20 } }, ["query"]),
+  tool("read_context", "Read one matching imported evidence block in bounded chunks. Continue with next_offset only when more of that block is needed.", { context_id: str, offset: { type: "integer", minimum: 0 } }, ["context_id"]),
   tool("create_position", "Create a position in the shared CRDT debate.", { title: str }, ["title"]),
   tool("rename_position", "Rename an existing position.", { position_id: str, title: str }, ["position_id", "title"]),
   tool("create_argument", "Create an argument in the shared flow. parent_id null creates a root; otherwise creates a response. speech is zero-based: 1AC, 1NC, 2AC, Block, 1AR, 2NR, 2AR.", { position_id: str, parent_id: nullableId, text: str, speech: integer }, ["position_id", "parent_id", "text", "speech"]),

@@ -1,7 +1,6 @@
 import { type Mark, type Speech } from "../model/types";
 import { type Anchor } from "../model/flow";
-import { markerOf } from "../layout/grid";
-import { decodeAnswer, encodeAnswer } from "../memory/answer";
+import { decodeAnswer } from "../memory/answer";
 import { completes } from "../memory/recall";
 import {
   columnOrder,
@@ -12,7 +11,6 @@ import {
 } from "../layout/navigate";
 import {
   openSheet,
-  followFocus,
   releaseSelection,
   type Command,
   type CommandContext,
@@ -259,7 +257,7 @@ export function resolveSpeech(text: string, speeches: Speech[]): number | null {
  * worse than doing nothing.
  */
 export function submitCommand(ctx: CommandContext): EditorState {
-  const { state, speeches, flow } = ctx;
+  const { state, speeches } = ctx;
   const closed = { ...state, command: null };
   // The keymap, on `:?`. Handled here rather than as a `SessionCommand` in App
   // because it is exactly what a `Command` is — a pure transition from one
@@ -271,10 +269,7 @@ export function submitCommand(ctx: CommandContext): EditorState {
   // Naming a speech with nothing in it is how you go to the one you are about
   // to give, so it lands there on nothing rather than doing nothing — see
   // `intoColumn`, which is the same landing `l` makes at the end of the sheet.
-  return followFocus(
-    intoColumn({ ...ctx, state: closed }, col),
-    flow,
-  );
+  return intoColumn({ ...ctx, state: closed }, col);
 }
 
 /** Abandon the command line, leaving the cursor alone. */
@@ -461,37 +456,10 @@ const toggleSupport: Command = (ctx) => {
   return { ...state, count: null };
 };
 
-/**
- * Memorize the answers to the cursor's argument — every response already
- * written under it, in order, kept in `~/.flow` against the argument itself
- * (see memory/store.ts). ⌘P puts them back the next time it comes up.
- *
- * What is memorized is what is on the sheet rather than something typed into a
- * separate list — a block file you maintain elsewhere is one that goes stale.
- * Which means the same key revises and forgets without being a mode: `m` makes
- * the store agree with the sheet, whatever it currently says.
- *
- * The cursor's argument only, not the selection: a block belongs to the one
- * argument it answers.
- */
-const memorize: Command = ({ state, flow, memory, sheets, placed }) => {
-  if (state.memory) return state; // already looking at the store
+const toggleImportant: Command = (ctx) => {
+  const { state, flow } = ctx;
   if (!state.cursorId || !flow.has(state.cursorId)) return state;
-  // Each answer is written with the marker the sheet is drawing beside it (see
-  // memory/answer.ts). Off `placed` rather than recomputed, because the number
-  // that goes into the block should be the one you were looking at when you
-  // pressed `m` — this is the one caller that already has the layout in hand.
-  const answers = flow
-    .childrenOf(state.cursorId)
-    // Before the marker goes on, not after: `o` makes an argument before you
-    // have typed into it, and an answer that is still empty used to drop out
-    // here on its own. Marked first, it would be stored as a bare "1.".
-    .filter((id) => flow.textOf(id).trim())
-    .map((id) => {
-      const index = placed.find((p) => p.id === id)?.index ?? null;
-      return encodeAnswer(markerOf(index, flow.markOf(id)), flow.textOf(id));
-    });
-  memory.keep(positionOf(sheets), flow.textOf(state.cursorId), answers);
+  flow.setImportant(selectedIds(ctx), !flow.importantOf(state.cursorId));
   return { ...state, count: null };
 };
 
@@ -525,7 +493,6 @@ const toggleMemory: Command = ({ state, sheets }) => ({
   editingId: null,
   count: null,
   selectAnchor: null,
-  focus: null,
 });
 
 /**
@@ -867,21 +834,9 @@ const history =
   };
 
 /**
- * Pin the sheet to the speech the cursor is in — collapsing everything but it
- * and its two neighbours — or unpin it. With no cursor there is nothing to pin
- * to, so nothing happens.
- */
-const toggleFocus: Command = ({ state, flow }) => {
-  if (state.focus !== null) return { ...state, focus: null };
-  if (!state.cursorId || !flow.has(state.cursorId)) return state;
-  return { ...state, focus: flow.speechOf(state.cursorId) };
-};
-
-/**
  * The range the sheet may be drawn over. The floor is where the type stops
- * being text and becomes the shape of the round — past it you want focus mode,
- * not a smaller font. The ceiling is roughly a printed sheet held at arm's
- * length, which is as far as reading a flow ever needs to go.
+ * being text and becomes the shape of the round. The ceiling is roughly a
+ * printed sheet held at arm's length.
  */
 export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 2.5;
@@ -995,13 +950,11 @@ export const commands: Record<string, Command> = {
   answer: respond, // a child, next speech column
   answerNext, // …and on to the next argument down the column you're answering
   recall, // every answer you have memorized to this one, as a block
-  memorize, // memorize the answers under the cursor, as the block for it
   memorySheet: toggleMemory, // …and everything you have memorized, as a flow of its own
   addBelow: sibling("after"), // another argument below…
   addAbove: sibling("before"), // …and above
   newBelow: newRoot("after"), // a new argument tree, clear of this one
   newAbove: newRoot("before"), // …above it: the overview case
-  focus: toggleFocus, // narrow the speeches you aren't in
   select: toggleSelect, // select a run in this column — mark / delete / copy act on it
   copy: yank, // …and everything answering it
   putBelow: put("after"), // put the copy below the cursor, or `3p` in the 3rd speech
@@ -1013,6 +966,7 @@ export const commands: Record<string, Command> = {
   sidebar: toggleSidebar, // show or hide the list of sheets
   mark: cycleMark, // how the selection is marked off: 1. / a. / nothing
   support: toggleSupport, // was it a card, or did they just say it
+  important: toggleImportant, // shade points that need attention
   // Async generation is performed by useAgent/useKeymap. This registry entry
   // gives it the same configurable naming layer as every other key.
   generate: ({ state }) => state,
@@ -1053,15 +1007,15 @@ export const DEFAULT_KEYS: Record<string, string> = {
   a: "answer",
   A: "answerNext",
   "M-p": "recall",
-  m: "memorize",
+  m: "important",
   M: "memorySheet",
   o: "addBelow",
   O: "addAbove",
   n: "newBelow",
   N: "newAbove",
-  f: "focus",
   v: "select",
   y: "copy",
+  "M-c": "copy",
   p: "putBelow",
   P: "putAbove",
   // The round's other sheets. Brackets because they are the pair vim already
@@ -1173,6 +1127,7 @@ const KEEPS_SELECTION = new Set([
   "select",
   "mark",
   "support",
+  "important",
   "delete",
   "shiftDown",
   "shiftUp",
@@ -1223,5 +1178,5 @@ export function run(
   const here = next.cursorId === null ? next : { ...next, column: null };
   const spent = { ...here, count: null };
   const kept = KEEPS_SELECTION.has(name) ? spent : { ...spent, selectAnchor: null };
-  return releaseSelection(followFocus(kept, ctx.flow), ctx.placed);
+  return releaseSelection(kept, ctx.placed);
 }

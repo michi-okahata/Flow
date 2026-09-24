@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 #[derive(Deserialize)]
@@ -15,6 +15,49 @@ pub async fn agent_cli_complete(request: AgentCliRequest) -> Result<String, Stri
     tauri::async_runtime::spawn_blocking(move || run(request))
         .await
         .map_err(|error| format!("agent process failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn agent_codex_rate_limits() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(read_codex_rate_limits)
+        .await
+        .map_err(|error| format!("usage process failed: {error}"))?
+}
+
+fn read_codex_rate_limits() -> Result<serde_json::Value, String> {
+    let mut child = Command::new("codex")
+        .args(["app-server", "--stdio"])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().map_err(|error| format!("could not start Codex App Server: {error}"))?;
+    let mut input = child.stdin.take().ok_or("Codex App Server stdin was unavailable")?;
+    let output = child.stdout.take().ok_or("Codex App Server stdout was unavailable")?;
+    let mut lines = BufReader::new(output).lines();
+    writeln!(input, "{}", serde_json::json!({
+        "method": "initialize", "id": 1,
+        "params": { "clientInfo": { "name": "flow", "title": "Flow", "version": "0.1.0" } }
+    })).map_err(|error| error.to_string())?;
+    input.flush().map_err(|error| error.to_string())?;
+    loop {
+        let line = lines.next().ok_or("Codex App Server closed during initialization")?
+            .map_err(|error| error.to_string())?;
+        let message: serde_json::Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        if message.get("id").and_then(|id| id.as_i64()) == Some(1) { break; }
+    }
+    writeln!(input, "{}", serde_json::json!({ "method": "initialized", "params": {} }))
+        .map_err(|error| error.to_string())?;
+    writeln!(input, "{}", serde_json::json!({ "method": "account/rateLimits/read", "id": 2, "params": {} }))
+        .map_err(|error| error.to_string())?;
+    input.flush().map_err(|error| error.to_string())?;
+    loop {
+        let line = lines.next().ok_or("Codex App Server closed before returning usage")?
+            .map_err(|error| error.to_string())?;
+        let message: serde_json::Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        if message.get("id").and_then(|id| id.as_i64()) == Some(2) {
+            let _ = child.kill();
+            if let Some(error) = message.get("error") { return Err(error.to_string()); }
+            return message.get("result").cloned().ok_or("Codex returned no usage result".into());
+        }
+    }
 }
 
 fn run(request: AgentCliRequest) -> Result<String, String> {

@@ -77,6 +77,8 @@ export interface ArgumentInit {
    * says so once, not once per card.
    */
   support?: Support;
+  /** Whether this individual argument is shaded for attention. */
+  important?: boolean;
 }
 
 /** Resolved placement: which parent, which slot, and the column to default to. */
@@ -185,6 +187,7 @@ export class Flow {
     node.data.set("speech", speech);
     node.data.set("mark", mark);
     node.data.set("support", support);
+    node.data.set("important", init.important ?? false);
     this.commit();
     return node.id;
   }
@@ -249,6 +252,10 @@ export class Flow {
     return readSupport(this.requireNode(id));
   }
 
+  importantOf(id: string): boolean {
+    return readImportant(this.requireNode(id));
+  }
+
   /**
    * Mark every argument in `ids` the same way, in one commit — so a
    * multi-argument selection re-marks as one undo step rather than one per
@@ -279,6 +286,15 @@ export class Flow {
     this.batch(() => {
       for (const id of ids) {
         if (this.has(id)) this.requireNode(id).data.set("support", support);
+      }
+    });
+  }
+
+  setImportant(ids: string[], important: boolean): void {
+    this.markCursor();
+    this.batch(() => {
+      for (const id of ids) {
+        if (this.has(id)) this.requireNode(id).data.set("important", important);
       }
     });
   }
@@ -343,6 +359,7 @@ export class Flow {
       text: readText(node),
       mark: readMark(node),
       support: readSupport(node),
+      important: readImportant(node),
       speech: this.readSpeech(node),
       children: (node.children() ?? []).map((child) => this.copy(child.id)),
     };
@@ -382,6 +399,7 @@ export class Flow {
       text: node.text,
       mark: node.mark,
       support: node.support,
+      important: node.important,
       speech: Math.max(node.speech + shift, 0),
     });
     for (const child of node.children) {
@@ -581,6 +599,10 @@ function readSupport(node: LoroTreeNode): Support {
   return s === "analytic" || s === "card" ? s : DEFAULT_SUPPORT;
 }
 
+function readImportant(node: LoroTreeNode): boolean {
+  return node.data.get("important") === true;
+}
+
 /** Convert a live Loro tree node into the immutable view `Argument`. */
 function toArgument(node: LoroTreeNode): Argument {
   return {
@@ -589,6 +611,7 @@ function toArgument(node: LoroTreeNode): Argument {
     speech: (node.data.get("speech") as number) ?? 0,
     mark: readMark(node),
     support: readSupport(node),
+    important: readImportant(node),
     children: (node.children() ?? []).map(toArgument),
   };
 }

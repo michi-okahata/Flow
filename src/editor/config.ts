@@ -85,6 +85,9 @@ export function readConfig(text: string | null): Config {
         // Old seeded configs listed digit0…digit9. Ignore those entries (and
         // any attempted numeric action) quietly: numbers always build counts.
         if (NUMBER_KEY.test(key)) continue;
+        // Focus mode has been retired. Ignore its old seeded binding so an
+        // existing config releases `f` without showing a repair warning.
+        if (name === "focus") continue;
         if (!KEY_PATTERN.test(key)) {
           problems.push(`config.json: "${key}" is not a key`);
           continue;
@@ -95,11 +98,15 @@ export function readConfig(text: string | null): Config {
           delete keys[key];
           continue;
         }
-        if (typeof name !== "string" || !(name in commands)) {
+        // `m` used to be seeded as "memorize". That command has been retired;
+        // carry existing configs forward so the new important marker works
+        // without asking the user to repair a generated setting by hand.
+        const command = key === "m" && name === "memorize" ? "important" : name;
+        if (typeof command !== "string" || !(command in commands)) {
           problems.push(`config.json: "${key}" is bound to no such command: ${String(name)}`);
           continue;
         }
-        keys[key] = name;
+        keys[key] = command;
       }
     }
   }

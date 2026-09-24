@@ -6,7 +6,7 @@ type Item = Record<string, unknown>;
 /** Replay output items, including encrypted reasoning, with matching call outputs. */
 export async function* responsesComplete(config: AiConfig, messages: Item[], signal: AbortSignal, execute?: (name: string, args: Item) => unknown): AsyncIterable<string> {
   const input = [...messages];
-  for (let turn = 0; turn < 12; turn++) {
+  while (true) {
     signal.throwIfAborted();
     const response = await postToRouter(config, {
       model: config.model, input, store: false, stream: true,
@@ -61,7 +61,6 @@ export async function* responsesComplete(config: AiConfig, messages: Item[], sig
       input.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result ?? null) });
     }
   }
-  throw new Error("Agent reached its traversal limit. Some edits may already be saved; ask it to continue.");
 }
 
 async function* events(response: Response, signal: AbortSignal): AsyncIterable<Item> {

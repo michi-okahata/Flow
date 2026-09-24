@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Flow } from "../model/flow";
-import { applyAgentToolCall } from "./tools";
+import { applyAgentToolCall, executeContextTool } from "./tools";
 
 describe("agent CRDT tools", () => {
   it("adds a generated answer through the ordinary Flow mutation path", () => {
@@ -25,6 +25,29 @@ describe("agent CRDT tools", () => {
       }),
     ).toThrow("no longer exists");
     expect(flow.roots()).toEqual([]);
+  });
+});
+
+describe("workspace context tools", () => {
+  const blocks = [
+    { source: "/cards/politics.cmir", position: "Politics", key: "uniqueness", argument: "Democrats ahead", answers: ["Polling lead"], context: ["Smith 24 says Democrats lead. ".repeat(400)] },
+    { source: "/cards/case.cmir", position: "Case", key: "solvency", argument: "Plan solves", answers: ["Mechanism works"] },
+  ];
+
+  it("searches compact metadata, then reads only a bounded chunk", () => {
+    const found = executeContextTool(blocks, "search_context", { query: "Democrats polling" }) as { context_id: string; argument: string }[];
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ context_id: "context:0", argument: "Democrats ahead" });
+    const read = executeContextTool(blocks, "read_context", { context_id: found[0].context_id }) as { content: string; next_offset: number | null };
+    expect(read.content.length).toBeLessThanOrEqual(6000);
+    expect(read.next_offset).toBe(6000);
+  });
+
+  it("lists sources without returning evidence bodies", () => {
+    expect(executeContextTool(blocks, "list_context_sources", {})).toEqual([
+      { source: "/cards/politics.cmir", block_count: 1 },
+      { source: "/cards/case.cmir", block_count: 1 },
+    ]);
   });
 });
 

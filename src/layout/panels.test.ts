@@ -24,7 +24,7 @@ describe("the flow's floor", () => {
     expect(flowFloor(frame())).toBe(7 * MIN_COLUMN);
   });
 
-  it("is lower under focus, where fewer columns are drawn", () => {
+  it("is lower for formats with fewer columns", () => {
     expect(flowFloor(frame({ columns: 3 }))).toBeLessThan(flowFloor(frame()));
   });
 

@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import { layoutFlow, measureRows } from "../layout/grid";
 import { selectionRange, threadOf } from "../layout/navigate";
-import { FOCUS_REACH, type Argument, type Placed, type Speech } from "../model/types";
+import { type Argument, type Placed, type Speech } from "../model/types";
 import type { Peer } from "../sync/presence";
 import type { AgentDraft } from "../agent/types";
 import { agentDraftRoots } from "../agent/draft";
@@ -18,45 +18,10 @@ const ROW_GAP = 2;
 
 const scaled = (px: number, zoom: number) => px * zoom;
 
-/**
- * The window of columns `f` actually draws: `focus` and `FOCUS_REACH` on
- * either side, clamped to the columns that exist rather than simply dropping
- * whichever half of the reach has nowhere to go.
- *
- * Pinning an end speech used to mean a *narrower* window — the 1AC has no
- * column at -1, so reaching one short of it drew two columns instead of
- * three, at exactly the two speeches (the 1AC, the 2AR) a debater is likeliest
- * to pin. Sliding the window inward instead keeps every pin the same width:
- * the promise `f` makes is "this speech and its neighbours", and at the edge
- * that has to mean the neighbour on the one side there is, doubled, not a
- * promise quietly kept half as well.
- */
-function focusRange(focus: number, count: number): [number, number] {
-  let lo = focus - FOCUS_REACH;
-  let hi = focus + FOCUS_REACH;
-  if (lo < 0) {
-    hi += -lo;
-    lo = 0;
-  }
-  if (hi > count - 1) {
-    lo -= hi - (count - 1);
-    hi = count - 1;
-  }
-  return [Math.max(0, lo), hi];
-}
-
-const inFocus = (col: number, range: [number, number] | null) =>
-  range === null || (col >= range[0] && col <= range[1]);
-
 interface FlowSheetProps {
   roots: Argument[];
   /** The columns, in order: what each speech is called and how wide it gets. */
   speeches: Speech[];
-  /**
-   * The speech to build the sheet around — the rest are narrowed. Null leaves
-   * every speech at its natural width.
-   */
-  focus?: number | null;
   renderArgument?: (arg: Argument) => React.ReactNode;
   /**
    * The layout for `roots`. Optional — pass it when the caller already needs
@@ -102,7 +67,6 @@ export function FlowSheet({
   cursorId,
   column = null,
   selectAnchor = null,
-  focus = null,
   zoom = 1,
   peers = [],
   drafts = [],
@@ -205,24 +169,7 @@ export function FlowSheet({
   const [rowHeights, setRowHeights] = useState<number[]>([]);
   const rowGap = scaled(ROW_GAP, zoom);
 
-  // The range `focus` draws, clamped to the sheet — see `focusRange`. Computed
-  // once so the three call sites below (visibleCols, the row-0 flush, and the
-  // cell filter) can't disagree about which columns are on screen.
-  const range = useMemo(
-    () => (focus === null ? null : focusRange(focus, speeches.length)),
-    [focus, speeches.length],
-  );
-
-  // The columns actually drawn, and where each lands in the grid. Out-of-focus
-  // speeches aren't narrowed, they're gone — no track, no gap, nothing to
-  // paint — so the ones in focus get the whole sheet rather than sharing it
-  // with slivers. Safe to drop entirely: `followFocus` (see editor/state.ts)
-  // slides `focus` along the moment the cursor would leave this range, so
-  // nothing ever points at a column that isn't rendered.
-  const visibleCols = useMemo(
-    () => speeches.map((_, i) => i).filter((i) => inFocus(i, range)),
-    [speeches, range],
-  );
+  const visibleCols = useMemo(() => speeches.map((_, i) => i), [speeches]);
   const colPos = useMemo(() => {
     const m = new Map<number, number>();
     visibleCols.forEach((col, i) => m.set(col, i + 1));
@@ -247,19 +194,14 @@ export function FlowSheet({
     };
 
     remeasure();
-    // Observe cells too: local expand/collapse and editor changes can shrink
-    // content without resizing the grid, whose tracks retain measured minima.
+    // Observe cells too: editor changes can resize content without resizing
+    // the grid, whose tracks retain measured minima.
     const ro = new ResizeObserver(remeasure);
     if (gridRef.current) ro.observe(gridRef.current);
     for (const el of cellRefs.current.values()) ro.observe(el);
     return () => ro.disconnect();
-    // `range` is a dependency and the observer cannot stand in for it: changing
-    // it redistributes width *between* columns without changing the grid's own
-    // size, so nothing resizes and the rows would keep the heights they were
-    // given at the previous set of column widths.
-    //
     // Zoom also changes cell metrics even when the viewport stays the same.
-  }, [placed, range, rowGap]);
+  }, [placed, rowGap]);
 
   // Keep the cursor on screen. `nearest` means this only scrolls when the
   // argument has actually gone off the edge — moving around inside the
@@ -305,16 +247,13 @@ export function FlowSheet({
         : undefined;
 
   return (
-    // Only the track lists are inline — they depend on the speeches. Every
-    // column is `minmax(0, …)` so it can shrink below its content width and a
-    // full policy round stays in frame.
+    // Columns keep a stable authored width. The flow pane scrolls horizontally
+    // when the round is wider than the available workspace.
     <div
       ref={gridRef}
       className="flow-grid"
       style={{
-        gridTemplateColumns: visibleCols
-          .map((i) => `minmax(0, ${speeches[i].weight}fr)`)
-          .join(" "),
+        gridTemplateColumns: visibleCols.map(() => `${150 * zoom}px`).join(" "),
         gridTemplateRows,
         rowGap: `${rowGap}px`,
       }}
@@ -373,10 +312,7 @@ export function FlowSheet({
         />
       )}
 
-      {placed
-        // Out-of-focus columns aren't drawn at all — see `visibleCols` above.
-        .filter((p) => inFocus(p.col, range))
-        .map((p) => {
+      {placed.map((p) => {
           const arg = byId.get(p.id)!;
           // Somebody else's cursor, if one is here. Their cursor is drawn the
           // way yours is — the rule, the wash, the hairline — in their colour
@@ -400,6 +336,8 @@ export function FlowSheet({
               className={`flow-cell is-${speeches[p.col].side}${p.id === cursorId ? " is-cursor" : ""}${
                 thread.has(p.id) ? " is-thread" : ""
               }${arg.support === "analytic" ? " is-analytic" : ""}${
+                arg.important ? " is-important" : ""
+              }${
                 peer ? " is-peer" : ""
               }${peer?.editing ? " is-peer-editing" : ""}`}
               title={

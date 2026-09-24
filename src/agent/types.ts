@@ -58,6 +58,11 @@ export interface DebateSheet {
   arguments: Argument[];
 }
 
+export interface AgentContextSource {
+  source: string;
+  blockCount: number;
+}
+
 export interface AgentRequest {
   id: string;
   sheet: string;
@@ -68,6 +73,8 @@ export interface AgentRequest {
   debate: DebateSheet[];
   history: AgentMessage[];
   context: AgentContextBlock[];
+  /** Small manifest captured when this request starts. Bodies stay bounded. */
+  contextSources: AgentContextSource[];
 }
 
 export interface AgentChatRequest {
@@ -78,6 +85,8 @@ export interface AgentChatRequest {
   debate: DebateSheet[];
   history: AgentMessage[];
   context: AgentContextBlock[];
+  /** Imported workspace files available to this turn's context tools. */
+  contextSources: AgentContextSource[];
 }
 
 export interface AgentProvider {

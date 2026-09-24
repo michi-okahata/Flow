@@ -17,6 +17,8 @@ export interface Argument {
   mark: Mark;
   /** Whether it was read off evidence or spoken. See `Support`. */
   support: Support;
+  /** A visually shaded point the user marked for attention. */
+  important?: boolean;
   children: Argument[];
 }
 
@@ -33,6 +35,7 @@ export interface Copied {
   text: string;
   mark: Mark;
   support: Support;
+  important?: boolean;
   /**
    * The column it was taken from.
    *
@@ -133,19 +136,6 @@ export interface Placed {
    */
   index: number | null;
 }
-
-/**
- * How far either side of the pinned speech stays on screen: the speech before
- * it and the one after, so `f` shows three columns.
- *
- * Shared vocabulary because two places must agree on it, and they use it
- * differently. The view turns it into the columns actually drawn (`focusRange`
- * in FlowSheet, which slides the window inward at the ends of the round so a
- * pin on the 1AC still gets three). The keymap uses it to decide when the
- * cursor has left that window, and slides the pin by one to follow rather than
- * dropping it (`followFocus` in editor/state.ts).
- */
-export const FOCUS_REACH = 1;
 
 /**
  * Who is holding a pen. A flow is written by people in the room, and — the

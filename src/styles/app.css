@@ -49,8 +49,8 @@ html {
      A flow is typed small enough that "readable across a table" and "a
      whole round on screen" are genuinely different sheets, and zoom is how
      you get from one to the other. So it is the type *and* everything bound
-     to it: shrink the font alone and the number gutter, the padding and the
-     collapsed marks stay put, and the sheet comes apart.
+     to it: shrink the font alone and the number gutter and padding stay put,
+     and the sheet comes apart.
 
      Declared here rather than at `:root` because a custom property is
      substituted where it is declared, not where it is used: written at

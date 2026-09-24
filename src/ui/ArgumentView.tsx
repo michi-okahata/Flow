@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { ArgumentEditor } from "./ArgumentEditor";
 import type { Dictionary } from "../editor/completion";
 import type { Argument } from "../model/types";
@@ -6,9 +6,6 @@ import type { Argument } from "../model/types";
 /**
  * One argument on the sheet, in whichever of its two states it's in: the text
  * as written, or the editor open on it.
- *
- * The display abbreviates long arguments; opening the editor reveals the
- * complete text. The stored argument is never shortened.
  *
  * No cursor state here: the *cell* wears it, so that the number is inside the
  * highlight — see the stylesheet.
@@ -24,6 +21,7 @@ interface ArgumentViewProps {
   keys: Record<string, string>;
   /** As the user types, for the throttled write into the flow. */
   onChange: (text: string) => void;
+  onPasteBlocks: (blocks: string[]) => void;
   /** The editor is finished with: flush and leave edit mode. */
   onDone: () => void;
   /** Put the cursor here. */
@@ -38,12 +36,11 @@ export function ArgumentView({
   dictionary,
   keys,
   onChange,
+  onPasteBlocks,
   onDone,
   onSelect,
   onEdit,
 }: ArgumentViewProps): React.ReactElement {
-  const [expanded, setExpanded] = useState(false);
-
   if (editing) {
     return (
       <ArgumentEditor
@@ -52,44 +49,21 @@ export function ArgumentView({
         dictionary={dictionary}
         keys={keys}
         onChange={onChange}
+        onPasteBlocks={onPasteBlocks}
         onDone={onDone}
       />
     );
   }
 
-  const text = argument.text.trim();
-  const firstSentence = typeof Intl.Segmenter === "function"
-    ? Array.from(new Intl.Segmenter("en", { granularity: "sentence" }).segment(text))[0]?.segment.trimEnd() ?? text
-    : text.match(/^.*?[.!?](?:["'”’)]*)(?=\s|$)/s)?.[0] ?? text;
-  const hasMore = firstSentence.length < text.length;
-  const collapsed = hasMore && !expanded;
-  const preview = collapsed ? firstSentence : argument.text;
-
   return (
     <div
-      className={`${ARGUMENT_CLASS}${collapsed ? " is-collapsed" : ""}`}
-      title={collapsed ? argument.text : undefined}
-      // Through the same helper the keymap uses, so a click on a collapsed
-      // rectangle two speeches away drops focus (and any selection) exactly
-      // as `l l` would.
+      className={ARGUMENT_CLASS}
+      // Through the same helper the keymap uses, so a click two speeches away
+      // drops focus (and any selection) exactly as `l l` would.
       onClick={onSelect}
       onDoubleClick={onEdit}
     >
-      <span>{preview || <span className="flow-argument__placeholder">empty</span>}</span>
-      {hasMore && <button
-        type="button"
-        className="flow-argument__disclosure"
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand full argument" : "Collapse to first sentence"}
-        title={collapsed ? "Show full argument" : "Show first sentence"}
-        onKeyDown={event => event.stopPropagation()}
-        onDoubleClick={event => event.stopPropagation()}
-        onClick={event => {
-          event.stopPropagation();
-          onSelect();
-          setExpanded(value => !value);
-        }}
-      ><span aria-hidden="true">{collapsed ? "▸" : "▾"}</span></button>}
+      <span>{argument.text || <span className="flow-argument__placeholder">empty</span>}</span>
     </div>
   );
 }

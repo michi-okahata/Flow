@@ -37,10 +37,10 @@ import { useMemoryRound } from "./ui/useMemoryRound";
 import { useKeymap } from "./ui/useKeymap";
 import { useConfig } from "./ui/useConfig";
 import { useTextBuffer } from "./ui/useTextBuffer";
-import { DEFAULT_MARK, DEFAULT_SUPPORT, FOCUS_REACH, type Argument } from "./model/types";
+import { DEFAULT_MARK, DEFAULT_SUPPORT, type Argument } from "./model/types";
 import { useAgent } from "./agent/useAgent";
 import { agentDraftRoots } from "./agent/draft";
-import { SIDEBAR_WIDTH, flowCollapsed, snapAgentWidth } from "./layout/panels";
+import { SIDEBAR_WIDTH, snapAgentWidth } from "./layout/panels";
 import { AgentPanel } from "./ui/AgentPanel";
 import { SpeechImportDialog } from "./ui/SpeechImportDialog";
 import { SpeechExportDialog } from "./ui/SpeechExportDialog";
@@ -113,7 +113,7 @@ function App() {
   const [speechImport, setSpeechImport] = useState<SpeechDocument | null>(null);
   const [speechImportError, setSpeechImportError] = useState<string | null>(null);
   const [speechExport, setSpeechExport] = useState<number | null>(null);
-  const { cursorId, editingId, column, count, focus, command, selectAnchor, sidebar, help, zoom, rewrites } =
+  const { cursorId, editingId, column, count, command, selectAnchor, sidebar, help, zoom, rewrites } =
     editor;
 
   // The rail should disappear during a speech, not collapse into a permanent
@@ -218,22 +218,19 @@ function App() {
   // argument and the answers to it — where the round has the format's seven.
   const speeches = editor.memory ? MEMORY_SPEECHES : SPEECHES;
 
-  // How the window is shared out. `f` narrows the sheet to a speech and its
-  // neighbours, so a focused flow needs less room than a whole round — the
-  // count is what `focusRange` draws (see FlowSheet.tsx), not the format's.
+  // How the window is shared out between the fixed-width flow and agent.
   const frame = useMemo(
     () => ({
       window: windowWidth,
       zoom,
       sidebar,
-      columns: focus === null ? speeches.length : Math.min(speeches.length, FOCUS_REACH * 2 + 1),
+      columns: speeches.length,
     }),
-    [windowWidth, zoom, sidebar, focus, speeches.length],
+    [windowWidth, zoom, sidebar, speeches.length],
   );
   // Whether the flow steps out and lets the panels have its width. Expanded,
   // the agent is already drawn over the flow, so there is nothing to decide.
   const agentShowing = agentOpen && !editor.memory;
-  const noFlow = !agentExpanded && flowCollapsed(frame, agentWidth, agentShowing);
 
   // What a keystroke does to the list on the left, on whichever substrate is
   // showing. On the memory sheet the list is your positions, so `:new` starts
@@ -550,7 +547,7 @@ function App() {
       case "export": {
         const initial = cursorId && roundFlow?.has(cursorId)
           ? roundFlow.speechOf(cursorId)
-          : (column ?? focus ?? 0);
+          : (column ?? 0);
         setSpeechImportError(null);
         setSpeechExport(Math.max(0, Math.min(SPEECHES.length - 1, initial)));
         break;
@@ -565,7 +562,7 @@ function App() {
         config.seed();
         break;
     }
-  }, [actions, config, flow, placed, sheets, activeSheet, open, sheetControls, library, memory, sheetActions, speeches, cursorId, roundFlow, column, focus]);
+  }, [actions, config, flow, placed, sheets, activeSheet, open, sheetControls, library, memory, sheetActions, speeches, cursorId, roundFlow, column]);
 
   const renderArgument = (arg: Argument) => {
     const editing = arg.id === editingId;
@@ -583,12 +580,29 @@ function App() {
       dictionary={dictionary}
       keys={config.keys}
       onChange={(text) => queueText(arg.id, text)}
+      onPasteBlocks={(blocks) => {
+        if (!flow || blocks.length < 2) return;
+        queueText(arg.id, blocks[0]);
+        flushText();
+        let last = arg.id;
+        flow.batch(() => {
+          for (const text of blocks.slice(1)) {
+            last = flow.add({ after: last }, { text, speech: arg.speech });
+          }
+        });
+        const next = last;
+        setEditor((state) => ({
+          ...moveCursorTo(state, next, placed),
+          editingId: next,
+          count: null,
+        }));
+      }}
       onDone={stopEditing}
-      onSelect={() => flow && setEditor((s) => moveCursorTo(s, flow, arg.id, placed))}
+      onSelect={() => flow && setEditor((s) => moveCursorTo(s, arg.id, placed))}
       onEdit={() =>
         flow &&
         setEditor((s) => ({
-          ...moveCursorTo(s, flow, arg.id, placed),
+          ...moveCursorTo(s, arg.id, placed),
           editingId: arg.id,
           count: null,
         }))
@@ -602,7 +616,7 @@ function App() {
     // it by every metric the sheet is drawn at — see the `.app` block. The cast
     // is only because React's CSSProperties has no room for custom properties.
     <main
-      className={`app${sidebar ? "" : " app--no-sidebar"}${noFlow ? " app--no-flow" : ""}`}
+      className={`app${sidebar ? "" : " app--no-sidebar"}`}
       // `--sidebar-width` is handed to the stylesheet rather than written in
       // it, because the arithmetic that decides whether a flow still fits has
       // to use the same number the sheet list is actually drawn at.
@@ -659,7 +673,6 @@ function App() {
       <div className="app__flow">
         <div className="flow-toolbar">
           <div><span className="flow-toolbar__dot" />{editor.memory ? "Your positions" : "Round workspace"}<span className="flow-toolbar__meta">{sheets.length} {sheets.length === 1 ? "sheet" : "sheets"}</span></div>
-          <button aria-pressed={focus !== null} onClick={() => setEditor(s => ({ ...s, focus: s.focus === null ? (column ?? 0) : null }))}>{focus === null ? "Focus speech" : "Show all speeches"}</button>
         </div>
         <FlowSheet
           roots={roots}
@@ -668,7 +681,6 @@ function App() {
           cursorId={cursorId}
           column={column}
           selectAnchor={selectAnchor}
-          focus={focus}
           zoom={zoom}
           // Only the peers on this sheet: everybody else's cursor is on an
           // argument that isn't drawn here, and the sidebar is where they show.
@@ -708,7 +720,6 @@ function App() {
         selectionSize={selectionSize}
         mark={mark}
         support={support}
-        focusLabel={focus === null ? null : (speeches[focus]?.label ?? "")}
         zoom={zoom}
         room={room}
         status={status}

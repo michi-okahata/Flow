@@ -6,7 +6,7 @@ import type { Block } from "../memory/store";
 import { compactDebate, compactHistory, selectContext } from "./context";
 import { providerFor } from "./provider";
 import { saveTranscript } from "./transcript";
-import { applyAgentToolCall, executeChatTool } from "./tools";
+import { applyAgentToolCall, contextSourcesOf, executeChatTool, executeContextTool } from "./tools";
 import type {
   AiConfig,
   AgentChatRequest,
@@ -94,6 +94,14 @@ function titleFor(message: string): string {
     the transcript; this is the part you read while it runs. */
 function summarize(result: unknown): string {
   if (result === undefined || result === null) return "";
+  if (typeof result === "object" && !Array.isArray(result)) {
+    const item = result as Record<string, unknown>;
+    if (typeof item.context_id === "string" && typeof item.argument === "string") {
+      const position = typeof item.position === "string" && item.position ? `${item.position} · ` : "";
+      const source = typeof item.source === "string" ? item.source.split(/[\\/]/).pop() : "";
+      return `${position}${item.argument}${source ? ` · ${source}` : ""}`.slice(0, 120);
+    }
+  }
   const text = typeof result === "string" ? result : JSON.stringify(result);
   return text.length > 120 ? `${text.slice(0, 119)}…` : text;
 }
@@ -223,6 +231,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
       debate: debate(Math.floor(budget * 0.35)),
       history,
       context,
+      contextSources: contextSourcesOf(imported),
     };
     let provider;
     try {
@@ -279,7 +288,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
           const response = draft.text.trim();
           const answers = parseAnswers(response);
           if (answers.length === 0) {
-            const message = "agent returned no answer";
+            const message = response ? "agent returned malformed answer JSON" : "agent returned no answer";
             setError(message);
             finish(request.id, "error", message);
             return { ...draft, status: "error", error: message };
@@ -369,7 +378,7 @@ export function useAgent(ctx: AgentContext): AgentControls {
   const send = useCallback((raw: string) => {
     const message = raw.trim().slice(0, 8000);
     if (!message) return;
-    const { config, round, imported, loadContext, sheet, selectedArgument } = latest.current;
+    const { config, round, imported, sheet, selectedArgument } = latest.current;
     if (!config) {
       setError("AI is not configured — add a valid ai section to ~/.flow/config.json");
       return;
@@ -398,8 +407,6 @@ export function useAgent(ctx: AgentContext): AgentControls {
     const requestId = id();
     const budget = config.contextTokens ?? 12_000;
     const history = compactHistory(round.agentMessages(threadId), Math.floor(budget * 0.35));
-    const contextQuery = `${sheet} ${selectedArgument ?? ""} ${message}`;
-    const contextBudget = Math.floor(budget * 0.3);
     const request: AgentChatRequest = {
       id: requestId,
       message,
@@ -407,12 +414,8 @@ export function useAgent(ctx: AgentContext): AgentControls {
       sheet,
       debate: debate(Math.floor(budget * 0.35)),
       history,
-      context: selectContext(
-        imported,
-        contextQuery,
-        sheet,
-        contextBudget,
-      ),
+      context: [],
+      contextSources: contextSourcesOf(imported),
     };
     const now = new Date().toISOString();
     round.appendAgentMessage(threadId, { id: `${requestId}:user`, role: "user", content: message, createdAt: now });
@@ -451,12 +454,6 @@ export function useAgent(ctx: AgentContext): AgentControls {
       let response = "";
       const steps: AgentStep[] = [];
       try {
-        request.context = selectContext(
-          await loadContext(request.context),
-          contextQuery,
-          sheet,
-          contextBudget,
-        );
         for await (const token of provider.chat(request, controller.signal, (name, args) => {
           controller.signal.throwIfAborted();
           if (latest.current.round !== round) throw new Error("The active debate changed");
@@ -474,7 +471,9 @@ export function useAgent(ctx: AgentContext): AgentControls {
             return run ? { ...current, [threadId]: { ...run, steps: [...run.steps, step] } } : current;
           });
           try {
-            const result = executeChatTool(round, name, args);
+            const result = name === "search_context" || name === "read_context" || name === "list_context_sources"
+              ? executeContextTool(imported, name, args)
+              : executeChatTool(round, name, args);
             const done = { status: "done" as const, detail: summarize(result), finishedAt: new Date().toISOString() };
             Object.assign(step, done);
             patchStep(stepId, done);
@@ -587,17 +586,57 @@ export function useAgent(ctx: AgentContext): AgentControls {
 
 /** A provider should return the requested JSON array; plain text stays useful
  * if a compatible endpoint ignores that instruction. */
-function parseAnswers(response: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(response);
-    if (Array.isArray(parsed)) {
-      return parsed
+export function parseAnswers(response: string): string[] {
+  const text = response.trim();
+  if (!text) return [];
+  const candidates = [text];
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) candidates.push(fenced);
+  const array = enclosedArray(text);
+  if (array) candidates.push(array);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      const values = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === "object" && Array.isArray((parsed as { answers?: unknown }).answers)
+          ? (parsed as { answers: unknown[] }).answers
+          : null;
+      if (!values) continue;
+      return values
         .filter((answer): answer is string => typeof answer === "string")
         .map((answer) => answer.trim())
         .filter(Boolean);
+    } catch {
+      // Try the next wrapper a compatible provider may have added.
     }
-  } catch {
-    // Keep a non-conforming provider's text as one accept-able argument.
   }
-  return response ? [response] : [];
+
+  // Plain prose from an endpoint that ignored the format instruction remains
+  // useful as one answer. JSON-looking output is withheld so brackets and
+  // half-written strings never become a flow argument.
+  return text.startsWith("[") || text.startsWith("{") || text.includes("```json") ? [] : [text];
+}
+
+/** Find the first complete JSON array even when reasoning or prose surrounds it. */
+function enclosedArray(text: string): string | null {
+  const start = text.indexOf("[");
+  if (start < 0) return null;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') quoted = true;
+    else if (char === "[") depth++;
+    else if (char === "]" && --depth === 0) return text.slice(start, index + 1);
+  }
+  return null;
 }

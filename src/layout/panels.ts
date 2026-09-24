@@ -37,8 +37,7 @@ export interface Frame {
   zoom: number;
   /** Whether the sheet list is showing. */
   sidebar: boolean;
-  /** Speech columns actually drawn — fewer under `f`, which is why a focused
-      flow survives in a narrower space than a whole round does. */
+  /** Speech columns in the current debate format. */
   columns: number;
 }
 

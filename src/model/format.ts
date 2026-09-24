@@ -17,8 +17,8 @@ import type { Speech } from "./types";
 // the same. Giving the 1AC and 1NC less — they're read off prepared documents,
 // so they get flowed in fewer words — reads as cramped rather than efficient:
 // the two columns you refer back to most end up the hardest to read. Focus
-// mode is the answer to a crowded sheet instead. The knob stays because a
-// column's width is a real thing to want to tune.
+// Horizontal scrolling is the answer to a crowded sheet. The weight remains
+// part of the format for compatibility with saved and custom formats.
 //
 // `side` is what the sheet shades by. The speeches alternate, so a sheet you
 // aren't reading closely still reads as a conversation rather than as seven

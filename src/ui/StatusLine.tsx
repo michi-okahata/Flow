@@ -39,8 +39,6 @@ interface StatusLineProps {
   mark: Mark;
   /** Whether the cursor's own argument was read off evidence. */
   support: Support;
-  /** The pinned speech's name, or null when the whole flow is shown. */
-  focusLabel: string | null;
   zoom: number;
   /** The room code, or null when flowing alone. */
   room: string | null;
@@ -130,7 +128,6 @@ export function StatusLine({
   selectionSize,
   mark,
   support,
-  focusLabel,
   zoom,
   room,
   status,
@@ -237,11 +234,8 @@ export function StatusLine({
         </span>
       )}
 
-      {/* Why the last `m` didn't take, next to the folder for the same reason
-          the folder is next to the room: these are the two places a flow
-          reaches past the window it is in. There is no chip for the ordinary
-          case — a store that is working is one nobody should have to think
-          about, and how many arguments are in it is not a thing you act on. */}
+      {/* Import and recall failures sit beside the saved file because both
+          describe places the flow reaches beyond the current window. */}
       {memoryError !== null && (
         <span className="app__file is-error" title={memoryError}>
           {memoryError}
@@ -267,8 +261,7 @@ export function StatusLine({
       )}
 
       {/* And what did take. Only `:import`, `:read` and `:forget`, which
-          otherwise finish with nothing on the screen moving — `m` says what it
-          did by the answer count appearing on the argument. */}
+          otherwise finish with nothing on the screen moving. */}
       {memoryNote !== null && (
         <span className="app__file" title={memoryNote}>
           {memoryNote}
@@ -352,11 +345,6 @@ export function StatusLine({
           between "nothing is memorized here" and "the folder you read in has
           eleven of these and none of them is the one you meant". */}
       {among > 0 && <span className="app__flag">{among} files</span>}
-
-      {/* Naming the pinned speech matters now that it doesn't follow the
-          cursor — it's the difference between "focus is on" and knowing which
-          three columns you're inside. */}
-      {focusLabel !== null && <span className="app__flag">focus {focusLabel}</span>}
 
       {/* Only once it's been touched: at 1 the sheet is at its authored size,
           and a permanent "100%" would be one more thing on the line saying

@@ -128,6 +128,7 @@
   --thread: var(--accent);
   --rule: #d9d9d9;
   --argument-hover: rgba(0, 0, 0, 0.04);
+  --important-bg: rgba(224, 168, 38, 0.18);
   /* The ink of the one shadow in the app (see .keymap). A token because it is
      the one thing a monochrome palette cannot invert by rule: everything else
      here swaps light for dark and keeps its meaning, but a shadow is *always*
@@ -159,6 +160,7 @@
     --argument-border: #575757;
     --rule: #2e2e2e;
     --argument-hover: rgba(255, 255, 255, 0.05);
+    --important-bg: rgba(235, 184, 62, 0.2);
     --shadow-ink: rgba(0, 0, 0, 0.5);
 
     --accent: #fafafa;
