@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { RELAY_PORT } from "./protocol";
+import { RELAY_PORT, relayUrlFor } from "./protocol";
 
 /**
  * Where the relay is, and — on the desktop app — being one.
@@ -69,10 +69,15 @@ export function clearRelayUrl(): void {
 export function hostFromUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
-    const port = Number(parsed.port);
-    return port && port !== RELAY_PORT
-      ? `${parsed.hostname}:${port}`
-      : parsed.hostname;
+    // Whatever reads back as this same relay: the bare name when that is what
+    // `relayUrlFor` would make of it, the port as well when it isn't. An
+    // invitation carries no scheme, so a relay that can't be named this way
+    // (plain `ws://` on a public name) keeps its port and hopes.
+    const bare = parsed.hostname;
+    const withPort = parsed.port ? `${bare}:${parsed.port}` : bare;
+    const same = (candidate: string) =>
+      new URL(relayUrlFor(candidate)).href === parsed.href;
+    return same(bare) ? bare : withPort;
   } catch {
     return null;
   }

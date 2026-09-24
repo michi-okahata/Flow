@@ -79,10 +79,27 @@ export function parseInvitation(text: string): Invitation | null {
   return { room, host: parts.length > 1 ? parts[parts.length - 2] : null };
 }
 
-/** The relay URL a host names. A bare host takes the default port. */
+/**
+ * The relay URL a host names.
+ *
+ * Two kinds of host, told apart by their name. A machine on the room's own
+ * network — an IP address, `localhost`, a `.local` name — is an app hosting,
+ * spoken to in plain `ws://` on the default port. Anything else is a relay on
+ * the internet, which sits behind TLS on 443 (Railway and its like serve
+ * nothing else), so a bare `flow.up.railway.app` means `wss://` with no port.
+ * An explicit scheme or port overrides the guess.
+ */
 export function relayUrlFor(host: string): string {
-  const withScheme = /^wss?:\/\//.test(host) ? host : `ws://${host}`;
-  return /:\d+$/.test(withScheme) ? withScheme : `${withScheme}:${RELAY_PORT}`;
+  if (/^wss?:\/\//.test(host)) return host;
+  const name = host.replace(/:\d+$/, "");
+  const local =
+    /^[\d.]+$/.test(name) ||
+    name.startsWith("[") ||
+    name === "localhost" ||
+    name.endsWith(".local") ||
+    !name.includes(".");
+  if (!local) return `wss://${host}`;
+  return name === host ? `ws://${host}:${RELAY_PORT}` : `ws://${host}`;
 }
 
 export type ClientMessage =

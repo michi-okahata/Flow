@@ -13,7 +13,7 @@ import {
 } from "./protocol";
 import { toPeer, type Peer, type Presence } from "./presence";
 import {
-  websocketTransport,
+  relayTransport,
   type ConnectionStatus,
   type Transport,
   type TransportHandlers,
@@ -76,7 +76,8 @@ export interface SessionOptions {
   /** Fills a fresh solo document. Never run for a document being joined. */
   seed?: (round: Round) => void;
   /**
-   * How to open a connection. The default is a WebSocket to `relayUrl`;
+   * How to open a connection. The default is a WebSocket to `relayUrl`,
+   * falling back to HTTP polling where one won't open;
    * overridden in tests, and the seam for any other wire (see transport.ts).
    */
   connect?: (url: string, handlers: TransportHandlers) => Transport;
@@ -379,7 +380,7 @@ export class FlowSession {
     this.disconnect();
     this.patch({ room, error: null });
 
-    const connect = this.options.connect ?? websocketTransport;
+    const connect = this.options.connect ?? relayTransport;
     this.transport = connect(this.state.relayUrl, {
       onOpen: () => this.hello(room),
       onMessage: (message) => this.receive(message),

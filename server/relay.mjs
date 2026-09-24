@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { LoroDoc } from "loro-crdt";
 import { WebSocketServer } from "ws";
@@ -29,7 +31,9 @@ import { WebSocketServer } from "ws";
  * for this reason — the same session class runs here.
  */
 
-const PORT = Number(process.env.FLOW_RELAY_PORT ?? 1421);
+// `PORT` is what a host like Railway assigns; `FLOW_RELAY_PORT` still wins so
+// an existing deploy that set it keeps its port.
+const PORT = Number(process.env.FLOW_RELAY_PORT ?? process.env.PORT ?? 1421);
 const DATA_DIR = process.env.FLOW_RELAY_DATA ?? ".flow-rooms";
 /** How long after the last change a room is written to disk. */
 const SAVE_DEBOUNCE_MS = 2_000;
@@ -87,21 +91,246 @@ function save(room) {
 function broadcast(room, from, message) {
   const payload = JSON.stringify(message);
   for (const client of room.clients) {
-    if (client !== from && client.readyState === 1) client.send(payload);
+    if (client !== from) client.deliver(payload);
   }
 }
 
-const send = (ws, message) => {
-  if (ws.readyState === 1) ws.send(JSON.stringify(message));
-};
+const send = (client, message) => client.deliver(JSON.stringify(message));
 
-const server = new WebSocketServer({ port: PORT });
+/**
+ * A peer, whatever it is connected over. `deliver` takes an already-serialised
+ * message; the room logic below never learns whether that went down a socket
+ * or into a queue for the next poll.
+ */
+const newClient = (deliver) => ({ room: null, peer: null, deliver });
 
-server.on("connection", (ws) => {
+function handle(client, message) {
+  if (message.t === "join") {
+    if (!isRoomCode(message.room)) {
+      send(client, { t: "error", reason: "bad room code" });
+      return;
+    }
+    leaveRoom(client);
+    const room = openRoom(message.room);
+    client.room = room;
+    client.peer = typeof message.peer === "string" ? message.peer : null;
+    room.clients.add(client);
+    send(client, {
+      t: "welcome",
+      room: message.room,
+      doc: room.written
+        ? Buffer.from(room.doc.export({ mode: "snapshot" })).toString("base64")
+        : null,
+    });
+    console.log(`[relay] ${message.room}: ${room.clients.size} peer(s)`);
+    return;
+  }
+
   // Set by `join`; until then the connection belongs to no room and anything
   // else it says is ignored.
-  ws.room = null;
-  ws.peer = null;
+  const room = client.room;
+  if (!room) return;
+
+  if (message.t === "doc" && typeof message.data === "string") {
+    try {
+      room.doc.import(new Uint8Array(Buffer.from(message.data, "base64")));
+    } catch (error) {
+      // Still forwarded: the peers can merge what the relay's own copy
+      // choked on, and a room that keeps working is worth more than a
+      // relay whose snapshot is complete.
+      console.error(`[relay] bad update`, error);
+    }
+    room.written = true;
+    save(room);
+    broadcast(room, client, message);
+    return;
+  }
+
+  if (message.t === "presence" && typeof message.data === "string") {
+    broadcast(room, client, message);
+  }
+}
+
+function leaveRoom(client) {
+  const room = client.room;
+  if (!room) return;
+  room.clients.delete(client);
+  client.room = null;
+  // Presence expires on its own, but not for half a minute — telling the room
+  // now is what takes a closed laptop's cursor off the sheet immediately.
+  if (client.peer) broadcast(room, client, { t: "gone", peer: client.peer });
+}
+
+/* ---- polling -------------------------------------------------------------
+   The same protocol over plain HTTPS requests, for the networks that won't
+   carry a WebSocket: school and tournament wifi whose filtering proxy drops
+   the upgrade, or holds it open and never answers. A proxy that lets a web
+   page load lets these through, because that is all they are.
+
+     POST /http/open             -> { "sid": "…" }
+     POST /http/send?sid=…       body: a JSON array of client messages
+     GET  /http/poll?sid=…       -> a JSON array of server messages, answered
+                                    as soon as there is one, or empty after
+                                    POLL_HOLD_MS
+
+   Bodies go as text/plain so a browser sends them without a CORS preflight —
+   one fewer request for a proxy to have an opinion about. */
+
+/** How long a poll is held open with nothing to say. Under the minute most
+    proxies allow an idle request. */
+const POLL_HOLD_MS = 20_000;
+/** A polling peer that hasn't asked for anything in this long has gone. */
+const POLL_EXPIRE_MS = 45_000;
+/** A snapshot of a long round, base64'd, with room to spare. */
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+/** sid -> { client, queue: string[], waiting: ServerResponse | null, holdTimer, seen } */
+const polling = new Map();
+
+function openPolling() {
+  const sid = randomUUID();
+  const entry = { queue: [], waiting: null, holdTimer: null, seen: Date.now() };
+  entry.client = newClient((payload) => {
+    entry.queue.push(payload);
+    if (entry.waiting) flushPoll(entry);
+  });
+  polling.set(sid, entry);
+  return sid;
+}
+
+function flushPoll(entry) {
+  const res = entry.waiting;
+  if (!res) return;
+  entry.waiting = null;
+  clearTimeout(entry.holdTimer);
+  entry.holdTimer = null;
+  entry.seen = Date.now();
+  const body = `[${entry.queue.join(",")}]`;
+  entry.queue = [];
+  reply(res, 200, body, "application/json");
+}
+
+function closePolling(sid) {
+  const entry = polling.get(sid);
+  if (!entry) return;
+  polling.delete(sid);
+  if (entry.waiting) flushPoll(entry);
+  leaveRoom(entry.client);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, entry] of polling) {
+    if (!entry.waiting && now - entry.seen > POLL_EXPIRE_MS) closePolling(sid);
+  }
+}, 10_000).unref();
+
+function reply(res, status, body = "", type = "text/plain") {
+  res.writeHead(status, {
+    "content-type": type,
+    "cache-control": "no-store",
+    // The app is served from anywhere — a dev server, `tauri://localhost` —
+    // and a room code is the only credential there is.
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type",
+  });
+  res.end(body);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+async function serveHttp(req, res) {
+  const url = new URL(req.url ?? "/", "http://relay");
+  if (req.method === "OPTIONS") return reply(res, 204);
+
+  if (url.pathname === "/" && req.method === "GET") {
+    // Something to open in a browser to see whether this network reaches the
+    // relay at all, and for a host's health check.
+    return reply(res, 200, "flow relay\n");
+  }
+
+  if (url.pathname === "/http/open" && req.method === "POST") {
+    return reply(res, 200, JSON.stringify({ sid: openPolling() }), "application/json");
+  }
+
+  const sid = url.searchParams.get("sid") ?? "";
+  const entry = polling.get(sid);
+
+  if (url.pathname === "/http/send" && req.method === "POST") {
+    let messages;
+    try {
+      messages = JSON.parse(await readBody(req));
+    } catch {
+      return reply(res, 400);
+    }
+    // Checked after the body: the sweep may have run while it was arriving.
+    const live = polling.get(sid);
+    if (!live) return reply(res, 410);
+    live.seen = Date.now();
+    if (Array.isArray(messages)) {
+      for (const message of messages) {
+        if (message && typeof message === "object") handle(live.client, message);
+      }
+    }
+    return reply(res, 204);
+  }
+
+  if (url.pathname === "/http/poll" && req.method === "GET") {
+    if (!entry) return reply(res, 410);
+    // One poll at a time. A second means the first was given up on by the
+    // client, so it is answered (empty) rather than left to time out.
+    if (entry.waiting) flushPoll(entry);
+    entry.waiting = res;
+    entry.seen = Date.now();
+    if (entry.queue.length > 0) return flushPoll(entry);
+    entry.holdTimer = setTimeout(() => flushPoll(entry), POLL_HOLD_MS);
+    res.on("close", () => {
+      if (entry.waiting === res) {
+        entry.waiting = null;
+        clearTimeout(entry.holdTimer);
+        entry.holdTimer = null;
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === "/http/close" && req.method === "POST") {
+    closePolling(sid);
+    return reply(res, 204);
+  }
+
+  reply(res, 404);
+}
+
+const httpServer = createServer((req, res) => {
+  serveHttp(req, res).catch(() => {
+    if (!res.headersSent) reply(res, 500);
+  });
+});
+
+const server = new WebSocketServer({ server: httpServer });
+
+server.on("connection", (ws) => {
+  const client = newClient((payload) => {
+    if (ws.readyState === 1) ws.send(payload);
+  });
 
   ws.on("message", (raw) => {
     let message;
@@ -110,63 +339,13 @@ server.on("connection", (ws) => {
     } catch {
       return;
     }
-
-    if (message.t === "join") {
-      if (!isRoomCode(message.room)) {
-        send(ws, { t: "error", reason: "bad room code" });
-        return;
-      }
-      leaveRoom(ws);
-      const room = openRoom(message.room);
-      ws.room = room;
-      ws.peer = typeof message.peer === "string" ? message.peer : null;
-      room.clients.add(ws);
-      send(ws, {
-        t: "welcome",
-        room: message.room,
-        doc: room.written
-          ? Buffer.from(room.doc.export({ mode: "snapshot" })).toString("base64")
-          : null,
-      });
-      console.log(`[relay] ${message.room}: ${room.clients.size} peer(s)`);
-      return;
-    }
-
-    const room = ws.room;
-    if (!room) return;
-
-    if (message.t === "doc" && typeof message.data === "string") {
-      try {
-        room.doc.import(new Uint8Array(Buffer.from(message.data, "base64")));
-      } catch (error) {
-        // Still forwarded: the peers can merge what the relay's own copy
-        // choked on, and a room that keeps working is worth more than a
-        // relay whose snapshot is complete.
-        console.error(`[relay] bad update`, error);
-      }
-      room.written = true;
-      save(room);
-      broadcast(room, ws, message);
-      return;
-    }
-
-    if (message.t === "presence" && typeof message.data === "string") {
-      broadcast(room, ws, message);
-    }
+    if (message && typeof message === "object") handle(client, message);
   });
 
-  ws.on("close", () => leaveRoom(ws));
-  ws.on("error", () => leaveRoom(ws));
+  ws.on("close", () => leaveRoom(client));
+  ws.on("error", () => leaveRoom(client));
 });
 
-function leaveRoom(ws) {
-  const room = ws.room;
-  if (!room) return;
-  room.clients.delete(ws);
-  ws.room = null;
-  // Presence expires on its own, but not for half a minute — telling the room
-  // now is what takes a closed laptop's cursor off the sheet immediately.
-  if (ws.peer) broadcast(room, ws, { t: "gone", peer: ws.peer });
-}
+httpServer.listen(PORT);
 
-console.log(`[relay] listening on ws://0.0.0.0:${PORT}, rooms in ${DATA_DIR}/`);
+console.log(`[relay] listening on :${PORT} (ws, and http polling), rooms in ${DATA_DIR}/`);
