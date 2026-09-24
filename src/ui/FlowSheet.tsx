@@ -253,7 +253,10 @@ export function FlowSheet({
       ref={gridRef}
       className="flow-grid"
       style={{
-        gridTemplateColumns: visibleCols.map(() => `${150 * zoom}px`).join(" "),
+        // Each speech at least its zoomed width, and sharing out whatever the
+        // pane has beyond that, so a zoomed-out flow fills the screen rather
+        // than stopping short of it.
+        gridTemplateColumns: visibleCols.map(() => `minmax(${150 * zoom}px, 1fr)`).join(" "),
         gridTemplateRows,
         rowGap: `${rowGap}px`,
       }}

@@ -612,18 +612,12 @@ function App() {
   };
 
   return (
-    // The zoom multiplier is handed to the stylesheet here and read back out of
-    // it by every metric the sheet is drawn at — see the `.app` block. The cast
-    // is only because React's CSSProperties has no room for custom properties.
     <main
       className={`app${sidebar ? "" : " app--no-sidebar"}`}
       // `--sidebar-width` is handed to the stylesheet rather than written in
       // it, because the arithmetic that decides whether a flow still fits has
       // to use the same number the sheet list is actually drawn at.
-      style={{
-        "--zoom": zoom,
-        "--sidebar-width": `${SIDEBAR_WIDTH * zoom}px`,
-      } as CSSProperties}
+      style={{ "--sidebar-width": `${SIDEBAR_WIDTH}px` } as CSSProperties}
     >
       <header className="workspace-bar">
         <div className="workspace-bar__identity">
@@ -670,7 +664,11 @@ function App() {
         />
       )}
 
-      <div className="app__flow">
+      {/* The zoom multiplier is handed to the stylesheet here, on the flow and
+          nowhere else: zoom is for the sheet, and the chrome around it stays
+          put. See the `.app__flow` block in app.css. The cast is only because
+          React's CSSProperties has no room for custom properties. */}
+      <div className="app__flow" style={{ "--zoom": zoom } as CSSProperties}>
         <div className="flow-toolbar">
           <div><span className="flow-toolbar__dot" />{editor.memory ? "Your positions" : "Round workspace"}<span className="flow-toolbar__meta">{sheets.length} {sheets.length === 1 ? "sheet" : "sheets"}</span></div>
         </div>

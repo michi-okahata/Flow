@@ -1,6 +1,6 @@
 /* Keep workspace metrics on the same zoom scale as the flow and panel layout. */
 :root { --chrome: #f3f3f1; --surface: #fff; --sheet: #fdfdfc; --band-neg: #f3f4f3; --rule: #e3e3df; --muted: #777974; --placeholder: #92948e; }
-.app { --workspace-height: calc(40px * var(--zoom)); --status-height: calc(24px * var(--zoom)); padding-top: var(--workspace-height); height: 100dvh; box-sizing: border-box; }
+.app { --workspace-height: calc(40px * var(--zoom)); --status-height: calc(24px * var(--zoom)); --toolbar-height: 34px; padding-top: var(--workspace-height); height: 100dvh; box-sizing: border-box; }
 .workspace-bar { position: fixed; inset: 0 0 auto; height: var(--workspace-height); display: flex; align-items: center; justify-content: space-between; gap: calc(16px * var(--zoom)); padding: 0 calc(10px * var(--zoom)); background: var(--surface); border-bottom: calc(1px * var(--zoom)) solid var(--rule); z-index: 5; font-size: calc(13px * var(--zoom)); }
 .workspace-bar__identity, .workspace-bar__actions { display: flex; align-items: center; gap: calc(6px * var(--zoom)); min-width: 0; }
 .workspace-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -21,15 +21,16 @@ button:focus-visible { outline: calc(2px * var(--zoom)) solid var(--accent); out
 .sidebar-sheet-icon { font-size: calc(12px * var(--zoom)); color: var(--muted); }
 .sidebar-footer { margin-top: auto; padding: calc(8px * var(--zoom)) calc(5px * var(--zoom)) 0; color: var(--muted); font-size: calc(10px * var(--zoom)); }
 .sidebar-footer button { display: flex; justify-content: space-between; width: 100%; margin-top: 0; padding: calc(10px * var(--zoom)) 0 0; border: 0; border-top: calc(1px * var(--zoom)) solid var(--rule); background: transparent; color: var(--muted); cursor: pointer; font: calc(11px * var(--zoom)) var(--font-ui); }
-/* One column at least as wide as the sheet, so the sticky toolbar spans every speech: as a plain block it was only the window's width, scrolled off to the left with the sheet, and let arguments show above the right-most headers. */
-.app__flow { height: calc(100dvh - var(--workspace-height) - var(--status-height)); overflow: auto; overscroll-behavior: contain; display: grid; grid-template-columns: minmax(max-content, 1fr); align-content: start; }
-.flow-toolbar { position: sticky; top: 0; z-index: 3; height: calc(34px * var(--zoom)); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; padding: 0 calc(10px * var(--zoom)); border-bottom: calc(1px * var(--zoom)) solid var(--rule); font-size: calc(12px * var(--zoom)); background: var(--surface); }
+/* One column at least as wide as the sheet's narrowest (every speech at its zoomed minimum) and otherwise the pane, so the sticky toolbar spans every speech: as a plain block it was only the window's width, scrolled off to the left with the sheet, and let arguments show above the right-most headers. */
+.app__flow { height: calc(100dvh - var(--workspace-height) - var(--status-height)); overflow: auto; overscroll-behavior: contain; display: grid; grid-template-columns: minmax(min-content, 1fr); align-content: start; }
+/* Chrome, though it lives inside the flow pane: held at zoom 1. */
+.flow-toolbar { --zoom: 1; position: sticky; top: 0; z-index: 3; height: var(--toolbar-height); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; padding: 0 calc(10px * var(--zoom)); border-bottom: calc(1px * var(--zoom)) solid var(--rule); font-size: calc(12px * var(--zoom)); background: var(--surface); }
 .flow-toolbar > div { display: flex; align-items: center; gap: calc(8px * var(--zoom)); position: sticky; left: calc(10px * var(--zoom)); }
 .flow-toolbar__dot { width: calc(6px * var(--zoom)); height: calc(6px * var(--zoom)); border-radius: 50%; background: #7c9485; }
 .flow-toolbar__meta { color: var(--muted); font-size: calc(10px * var(--zoom)); margin-left: calc(8px * var(--zoom)); }
 .flow-toolbar button { font-size: calc(11px * var(--zoom)); }
-.flow-grid { min-height: calc(100dvh - var(--workspace-height) - var(--status-height) - calc(34px * var(--zoom))); }
-.flow-header { top: calc(34px * var(--zoom)); padding-top: calc(6px * var(--zoom)); padding-bottom: calc(6px * var(--zoom)); font-size: calc(11px * var(--zoom)); color: var(--muted); letter-spacing: .04em; }
+.flow-grid { min-height: calc(100dvh - var(--workspace-height) - var(--status-height) - var(--toolbar-height)); }
+.flow-header { top: var(--toolbar-height); padding-top: calc(6px * var(--zoom)); padding-bottom: calc(6px * var(--zoom)); font-size: calc(11px * var(--zoom)); color: var(--muted); letter-spacing: .04em; }
 .app__status { box-sizing: border-box; font-size: calc(10px * var(--zoom)); background: var(--surface); padding: 0 calc(12px * var(--zoom)); }
 .agent-panel { height: calc(100dvh - var(--workspace-height) - var(--status-height)); box-sizing: border-box; background: var(--surface); font-size: calc(13px * var(--zoom)); }
 .agent-panel.is-expanded { top: var(--workspace-height); }

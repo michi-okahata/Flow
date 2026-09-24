@@ -42,9 +42,9 @@ html {
 
   /* ---- zoom -----------------------------------------------------------
      Every metric the sheet is drawn at, in terms of one multiplier, which
-     `App` sets inline from the editor state (the 1 below is the fallback,
-     and the size the flow is authored at). The authored pixel values are
-     unchanged — they have only moved inside a calc().
+     `App` sets inline on `.app__flow` from the editor state. The 1 here is
+     what everything outside the flow is drawn at, always. The authored pixel
+     values are unchanged — they have only moved inside a calc().
 
      A flow is typed small enough that "readable across a table" and "a
      whole round on screen" are genuinely different sheets, and zoom is how
@@ -58,10 +58,6 @@ html {
      the one set on this element. Two metrics can't be expressed this way at
      all — see `scaled` in FlowSheet.tsx. */
   --zoom: 1;
-  /* The status line at the bottom is drawn at the sheet's own size, same as
-     everything above it — a status line that stayed 10px while the sheet
-     grew to 20 would be unreadable at exactly the zoom level meant to make
-     the sheet readable. */
   --status-height: calc(20px * var(--zoom));
   --argument-font-size: calc(10px * var(--zoom));
   /* The 2px on the left is the whole distance between the rule and the first
@@ -85,6 +81,18 @@ html {
 .app__flow {
   flex: 1 1 auto;
   min-width: 0;
+
+  /* The sheet's metrics again, under the zoom App sets inline on this element
+     — declared here for the same reason they are declared on `.app` at all:
+     a custom property is substituted where it is declared. `.app` keeps a
+     zoom of 1, so the chrome around the flow never scales. `--status-height`
+     is deliberately not repeated: the status line is chrome now. */
+  --argument-font-size: calc(10px * var(--zoom));
+  --argument-pad: 0 0 0 calc(2px * var(--zoom));
+  --argument-gutter: calc(2px * var(--zoom));
+  --column-gap: calc(7px * var(--zoom));
+  --header-font-size: calc(11px * var(--zoom));
+  font-size: var(--argument-font-size);
 }
 
 /* No room left to draw a flow in.

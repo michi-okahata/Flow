@@ -14,8 +14,9 @@
  * out and gives its width to the panel that wanted it.
  */
 
-/** The sheet list's width, in the sheet's own units — see `--sidebar-width`,
-    which App hands to the stylesheet so this number is only written once. */
+/** The sheet list's width, in CSS pixels — it is chrome, and does not zoom.
+    See `--sidebar-width`, which App hands to the stylesheet so this number is
+    only written once. */
 export const SIDEBAR_WIDTH = 184;
 
 /**
@@ -33,7 +34,7 @@ export const MIN_AGENT_WIDTH = 280;
 export interface Frame {
   /** The window's inner width, in CSS pixels. */
   window: number;
-  /** The sheet's zoom multiplier: every metric below is in sheet units. */
+  /** The sheet's zoom multiplier. Only the flow's own widths scale by it. */
   zoom: number;
   /** Whether the sheet list is showing. */
   sidebar: boolean;
@@ -42,7 +43,7 @@ export interface Frame {
 }
 
 const sidebarWidth = (frame: Frame): number =>
-  frame.sidebar ? SIDEBAR_WIDTH * frame.zoom : 0;
+  frame.sidebar ? SIDEBAR_WIDTH : 0;
 
 /** The width below which a flow is not worth drawing. */
 export function flowFloor(frame: Frame): number {

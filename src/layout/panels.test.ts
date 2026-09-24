@@ -28,7 +28,7 @@ describe("the flow's floor", () => {
     expect(flowFloor(frame({ columns: 3 }))).toBeLessThan(flowFloor(frame()));
   });
 
-  it("grows with the zoom, like every other metric on the sheet", () => {
+  it("grows with the zoom, like the columns it is made of", () => {
     expect(flowFloor(frame({ zoom: 2 }))).toBe(2 * flowFloor(frame()));
   });
 
