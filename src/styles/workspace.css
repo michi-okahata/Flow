@@ -187,16 +187,18 @@ button:focus-visible {
   font-size: 16px;
 }
 
+/* The list is the one piece of chrome you aim at mid-round, so its rows are
+   a size up from the rest: taller than a control and set at 13px. */
 .app__sheet {
-  min-height: var(--ui-control);
+  min-height: 30px;
   box-sizing: border-box;
   padding: 0 8px;
-  margin-bottom: 0;
-  gap: var(--ui-gap);
+  margin-bottom: 1px;
+  gap: 8px;
   border: 0;
   border-radius: var(--ui-radius);
   line-height: 1.2;
-  font-size: var(--ui-text);
+  font-size: 13px;
 }
 
 .app__sheet.is-active {
@@ -206,7 +208,7 @@ button:focus-visible {
 
 .sidebar-sheet-icon,
 .app__sheet-delete {
-  font-size: var(--ui-text-sm);
+  font-size: var(--ui-text);
   color: var(--muted);
 }
 
