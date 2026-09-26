@@ -1,49 +1,482 @@
-/* Keep workspace metrics on the same zoom scale as the flow and panel layout. */
-:root { --chrome: #f3f3f1; --surface: #fff; --sheet: #fdfdfc; --band-neg: #f3f4f3; --rule: #e3e3df; --muted: #777974; --placeholder: #92948e; }
-.app { --workspace-height: calc(40px * var(--zoom)); --status-height: calc(24px * var(--zoom)); --toolbar-height: 34px; padding-top: var(--workspace-height); height: 100dvh; box-sizing: border-box; }
-.workspace-bar { position: fixed; inset: 0 0 auto; height: var(--workspace-height); display: flex; align-items: center; justify-content: space-between; gap: calc(16px * var(--zoom)); padding: 0 calc(10px * var(--zoom)); background: var(--surface); border-bottom: calc(1px * var(--zoom)) solid var(--rule); z-index: 5; font-size: calc(13px * var(--zoom)); }
-.workspace-bar__identity, .workspace-bar__actions { display: flex; align-items: center; gap: calc(6px * var(--zoom)); min-width: 0; }
-.workspace-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-badge { font-size: calc(10px * var(--zoom)); border: calc(1px * var(--zoom)) solid var(--rule); border-radius: calc(5px * var(--zoom)); padding: calc(3px * var(--zoom)) calc(6px * var(--zoom)); color: var(--muted); white-space: nowrap; }
-.workspace-bar button, .flow-toolbar button { font: inherit; color: var(--muted); border: 0; background: transparent; border-radius: calc(6px * var(--zoom)); padding: calc(5px * var(--zoom)) calc(7px * var(--zoom)); cursor: pointer; white-space: nowrap; }
-.workspace-bar button:hover, .flow-toolbar button:hover { background: var(--chrome); color: var(--argument-fg); }
-.workspace-bar button.is-selected { background: var(--chrome); color: var(--argument-fg); }
-.workspace-bar kbd { font: calc(10px * var(--zoom)) var(--font-ui); margin-left: calc(12px * var(--zoom)); color: var(--muted); }
-button:focus-visible { outline: calc(2px * var(--zoom)) solid var(--accent); outline-offset: calc(2px * var(--zoom)); }
-.app__sidebar { background: var(--chrome); height: calc(100dvh - var(--workspace-height) - var(--status-height)); box-sizing: border-box; padding: calc(10px * var(--zoom)) calc(8px * var(--zoom)) calc(8px * var(--zoom)); font-size: calc(13px * var(--zoom)); }
-.sidebar-new { display: flex; align-items: center; gap: calc(8px * var(--zoom)); border: calc(1px * var(--zoom)) solid var(--rule); border-radius: calc(7px * var(--zoom)); padding: calc(6px * var(--zoom)) calc(8px * var(--zoom)); font: inherit; color: var(--argument-fg); background: var(--surface); cursor: pointer; margin-bottom: calc(12px * var(--zoom)); }
-.sidebar-new kbd { margin-left: auto; font-size: calc(10px * var(--zoom)); color: var(--muted); }
-.app__sidebar-head { background: transparent; border: 0; padding: 0 calc(6px * var(--zoom)) calc(6px * var(--zoom)); font: calc(11px * var(--zoom)) var(--font-ui); letter-spacing: 0; text-transform: capitalize; }
-.app__sidebar-label { margin: 0; }
-.app__sidebar-add { font-size: calc(18px * var(--zoom)); }
-.app__sheet { border: 0; padding: calc(1px * var(--zoom)) calc(6px * var(--zoom)); margin-bottom: 0; gap: calc(5px * var(--zoom)); border-radius: calc(4px * var(--zoom)); line-height: 1.15; }
-.app__sheet.is-active { background: var(--accent-soft); color: var(--argument-fg); }
-.sidebar-sheet-icon { font-size: calc(12px * var(--zoom)); color: var(--muted); }
-.sidebar-footer { margin-top: auto; padding: calc(8px * var(--zoom)) calc(5px * var(--zoom)) 0; color: var(--muted); font-size: calc(10px * var(--zoom)); }
-.sidebar-footer button { display: flex; justify-content: space-between; width: 100%; margin-top: 0; padding: calc(10px * var(--zoom)) 0 0; border: 0; border-top: calc(1px * var(--zoom)) solid var(--rule); background: transparent; color: var(--muted); cursor: pointer; font: calc(11px * var(--zoom)) var(--font-ui); }
-/* One column at least as wide as the sheet's narrowest (every speech at its zoomed minimum) and otherwise the pane, so the sticky toolbar spans every speech: as a plain block it was only the window's width, scrolled off to the left with the sheet, and let arguments show above the right-most headers. */
-.app__flow { height: calc(100dvh - var(--workspace-height) - var(--status-height)); overflow: auto; overscroll-behavior: contain; display: grid; grid-template-columns: minmax(min-content, 1fr); align-content: start; }
+/* ---- workspace chrome -------------------------------------------------
+   Everything around the flow — the bar along the top, the sheet list, the
+   flow's toolbar, the agent panel and the status line — drawn from one small
+   scale, so no two pieces of chrome disagree about how big a label is or how
+   far text sits from an edge. Last in the cascade on purpose: it is the one
+   place these metrics are decided, over whatever the component files say.
+
+   None of it zooms. Zoom belongs to the flow (see `.app__flow` in app.css);
+   the chrome is the frame the sheet is read in and stays put. */
+
+:root {
+  --chrome: #f3f3f1;
+  --surface: #fff;
+  --sheet: #fdfdfc;
+  --band-neg: #f3f4f3;
+  --rule: #e3e3df;
+  --muted: #777974;
+  --placeholder: #92948e;
+
+  /* Three sizes of type, and only three. */
+  --ui-text: 12px;    /* what you read and click: titles, rows, buttons, chat */
+  --ui-text-sm: 11px; /* what labels those: section heads, meta, who said it */
+  --ui-text-xs: 10px; /* hints: key chords, badges, the status line */
+
+  /* One inset from every panel edge, one gap between neighbours. */
+  --ui-inset: 10px;
+  --ui-gap: 6px;
+
+  /* One height for a clickable thing, one radius for its corners. */
+  --ui-control: 26px;
+  --ui-radius: 6px;
+  --ui-radius-sm: 4px;
+  --ui-radius-lg: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chrome: #202120;
+    --surface: #191a19;
+    --sheet: #191a19;
+    --band-neg: #202220;
+    --rule: #323430;
+    --muted: #a0a39b;
+    --placeholder: #797d74;
+  }
+}
+
+/* The three horizontal strips. The flow's toolbar and the agent's head are
+   the same strip in two panes, so they share a height and meet in one line. */
+.app {
+  --workspace-height: 40px;
+  --toolbar-height: 34px;
+  --status-height: 24px;
+  padding-top: var(--workspace-height);
+  height: 100dvh;
+  box-sizing: border-box;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- shared shapes ---------------------------------------------------- */
+
+/* A quiet button: text until hovered. */
+.workspace-bar button,
+.flow-toolbar button,
+.agent-panel__head button {
+  height: var(--ui-control);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--muted);
+  font: var(--ui-text) var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-gap);
+}
+
+.workspace-bar button:hover,
+.flow-toolbar button:hover,
+.agent-panel__head button:hover:not(:disabled),
+.workspace-bar button.is-selected {
+  background: var(--chrome);
+  color: var(--argument-fg);
+}
+
+/* A key chord or a small standing label. */
+.workspace-bar kbd,
+.sidebar-new kbd,
+.sidebar-footer kbd,
+.workspace-badge {
+  font: var(--ui-text-xs) var(--font-ui);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.workspace-badge {
+  padding: 2px 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--ui-radius-sm);
+}
+
+/* ---- the bar along the top ------------------------------------------- */
+
+.workspace-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 5;
+  height: var(--workspace-height);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 var(--ui-inset);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font: var(--ui-text) var(--font-ui);
+}
+
+.workspace-bar__identity,
+.workspace-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-gap);
+  min-width: 0;
+}
+
+.workspace-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- the sheet list --------------------------------------------------- */
+
+/* The top padding centres the first control in a toolbar-high strip, so
+   "New sheet" sits on the same line as the toolbar beside it. */
+.app__sidebar {
+  height: calc(100dvh - var(--workspace-height) - var(--status-height));
+  box-sizing: border-box;
+  padding: calc((var(--toolbar-height) - var(--ui-control)) / 2) 8px 8px;
+  background: var(--chrome);
+  font: var(--ui-text) var(--font-ui);
+}
+
+.sidebar-new {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-gap);
+  height: var(--ui-control);
+  box-sizing: border-box;
+  padding: 0 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--ui-radius);
+  background: var(--surface);
+  color: var(--argument-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sidebar-new kbd {
+  margin-left: auto;
+}
+
+.app__sidebar-head {
+  padding: 0 8px var(--ui-gap);
+  border: 0;
+  background: transparent;
+  font: var(--ui-text-sm) var(--font-ui);
+  letter-spacing: 0;
+  text-transform: capitalize;
+}
+
+.app__sidebar-label {
+  margin: 0;
+}
+
+.app__sidebar-add {
+  font-size: 16px;
+}
+
+.app__sheet {
+  min-height: var(--ui-control);
+  box-sizing: border-box;
+  padding: 0 8px;
+  margin-bottom: 0;
+  gap: var(--ui-gap);
+  border: 0;
+  border-radius: var(--ui-radius);
+  line-height: 1.2;
+  font-size: var(--ui-text);
+}
+
+.app__sheet.is-active {
+  background: var(--accent-soft);
+  color: var(--argument-fg);
+}
+
+.sidebar-sheet-icon,
+.app__sheet-delete {
+  font-size: var(--ui-text-sm);
+  color: var(--muted);
+}
+
+.app__sheets-empty {
+  margin: var(--ui-gap) 8px;
+  font-size: var(--ui-text-sm);
+  color: var(--placeholder);
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 8px 0 0;
+  color: var(--muted);
+}
+
+.sidebar-footer button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: var(--ui-control);
+  margin-top: 0;
+  padding: 0 8px;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: transparent;
+  color: var(--muted);
+  font: var(--ui-text-sm) var(--font-ui);
+  cursor: pointer;
+}
+
+/* ---- the flow's own strip -------------------------------------------- */
+
+/* One column at least as wide as the sheet's narrowest (every speech at its
+   zoomed minimum) and otherwise the pane, so the sticky toolbar spans every
+   speech: as a plain block it was only the window's width, scrolled off to the
+   left with the sheet, and let arguments show above the right-most headers. */
+.app__flow {
+  height: calc(100dvh - var(--workspace-height) - var(--status-height));
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: minmax(min-content, 1fr);
+  align-content: start;
+}
+
 /* Chrome, though it lives inside the flow pane: held at zoom 1. */
-.flow-toolbar { --zoom: 1; position: sticky; top: 0; z-index: 3; height: var(--toolbar-height); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; padding: 0 calc(10px * var(--zoom)); border-bottom: calc(1px * var(--zoom)) solid var(--rule); font-size: calc(12px * var(--zoom)); background: var(--surface); }
-.flow-toolbar > div { display: flex; align-items: center; gap: calc(8px * var(--zoom)); position: sticky; left: calc(10px * var(--zoom)); }
-.flow-toolbar__dot { width: calc(6px * var(--zoom)); height: calc(6px * var(--zoom)); border-radius: 50%; background: #7c9485; }
-.flow-toolbar__meta { color: var(--muted); font-size: calc(10px * var(--zoom)); margin-left: calc(8px * var(--zoom)); }
-.flow-toolbar button { font-size: calc(11px * var(--zoom)); }
-.flow-grid { min-height: calc(100dvh - var(--workspace-height) - var(--status-height) - var(--toolbar-height)); }
-.flow-header { top: var(--toolbar-height); padding-top: calc(6px * var(--zoom)); padding-bottom: calc(6px * var(--zoom)); font-size: calc(11px * var(--zoom)); color: var(--muted); letter-spacing: .04em; }
-.app__status { box-sizing: border-box; font-size: calc(10px * var(--zoom)); background: var(--surface); padding: 0 calc(12px * var(--zoom)); }
-.agent-panel { height: calc(100dvh - var(--workspace-height) - var(--status-height)); box-sizing: border-box; background: var(--surface); font-size: calc(13px * var(--zoom)); }
-.agent-panel.is-expanded { top: var(--workspace-height); }
-.agent-panel__head { padding: calc(10px * var(--zoom)) calc(12px * var(--zoom)); align-items: center; }
-.agent-panel__head strong { font: 600 calc(13px * var(--zoom)) var(--font-ui); }
-.agent-panel__head span { font: calc(10px * var(--zoom)) var(--font-ui); margin-top: calc(4px * var(--zoom)); }
-.agent-panel__context { padding: calc(8px * var(--zoom)) calc(12px * var(--zoom)); font: calc(10px * var(--zoom)) var(--font-ui); }
-.agent-panel__messages { padding: calc(12px * var(--zoom)); }
-.agent-welcome { margin: 0 auto; max-width: calc(420px * var(--zoom)); }
-.agent-suggestions { display: grid; gap: calc(5px * var(--zoom)); margin-top: 0; }
-.agent-suggestions button { border: calc(1px * var(--zoom)) solid var(--rule); border-radius: calc(8px * var(--zoom)); padding: calc(8px * var(--zoom)) calc(10px * var(--zoom)); text-align: left; display: flex; justify-content: space-between; font-size: calc(11px * var(--zoom)); }
-.agent-panel__composer { margin: calc(8px * var(--zoom)); padding: calc(10px * var(--zoom)); border: 0; border-radius: calc(12px * var(--zoom)); background: var(--sheet); box-shadow: 0 calc(3px * var(--zoom)) calc(14px * var(--zoom)) #00000012, 0 0 0 calc(1px * var(--zoom)) #00000008; }
-.agent-panel__composer textarea { background: transparent; border: 0; padding: calc(2px * var(--zoom)); font: calc(12px * var(--zoom))/1.6 var(--font-ui); }
-.agent-panel__composer button[type="submit"] { border-radius: calc(7px * var(--zoom)); padding: calc(7px * var(--zoom)) calc(14px * var(--zoom)); }
-@media (prefers-color-scheme: dark) { :root { --chrome: #202120; --surface: #191a19; --sheet: #191a19; --band-neg: #202220; --rule: #323430; --muted: #a0a39b; --placeholder: #797d74; } }
-@media (max-width: 720px) { .workspace-badge, .workspace-divider, .workspace-bar__actions > button:first-child, .flow-toolbar__meta { display: none; } .workspace-bar { padding: 0 calc(8px * var(--zoom)); gap: calc(6px * var(--zoom)); } .workspace-bar__identity, .workspace-bar__actions { gap: calc(4px * var(--zoom)); } .workspace-title { max-width: calc(100px * var(--zoom)); } .workspace-bar kbd { display: none; } .flow-toolbar { padding: 0 calc(8px * var(--zoom)); } }
+.flow-toolbar {
+  --zoom: 1;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: var(--toolbar-height);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--ui-inset);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font: var(--ui-text) var(--font-ui);
+}
+
+.flow-toolbar > div {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-gap);
+  position: sticky;
+  left: var(--ui-inset);
+}
+
+.flow-toolbar__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7c9485;
+}
+
+.flow-toolbar__meta {
+  margin-left: var(--ui-gap);
+  color: var(--muted);
+  font-size: var(--ui-text-sm);
+}
+
+/* The sheet's own headers zoom with the sheet; only their offset is chrome. */
+.flow-grid {
+  min-height: calc(100dvh - var(--workspace-height) - var(--status-height) - var(--toolbar-height));
+}
+
+.flow-header {
+  top: var(--toolbar-height);
+  padding-top: calc(6px * var(--zoom));
+  padding-bottom: calc(6px * var(--zoom));
+  font-size: calc(11px * var(--zoom));
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+/* ---- the agent -------------------------------------------------------- */
+
+.agent-panel {
+  height: calc(100dvh - var(--workspace-height) - var(--status-height));
+  box-sizing: border-box;
+  background: var(--surface);
+  font: var(--ui-text) var(--font-ui);
+}
+
+.agent-panel.is-expanded {
+  top: var(--workspace-height);
+}
+
+.agent-panel__head {
+  height: var(--toolbar-height);
+  box-sizing: border-box;
+  padding: 0 var(--ui-gap) 0 var(--ui-inset);
+  align-items: center;
+  border-bottom: 1px solid var(--rule);
+}
+
+.agent-panel__head strong {
+  font: 600 var(--ui-text) var(--font-ui);
+}
+
+.agent-panel__head span {
+  margin-top: 0;
+  font: var(--ui-text-sm) var(--font-ui);
+}
+
+.agent-panel__head-actions {
+  gap: 2px;
+}
+
+.agent-panel__head button {
+  padding: 0 var(--ui-gap);
+}
+
+.agent-panel__context {
+  gap: var(--ui-gap);
+  padding: var(--ui-gap) var(--ui-gap) var(--ui-gap) var(--ui-inset);
+  font: var(--ui-text-sm) var(--font-ui);
+}
+
+.agent-panel__context .agent-panel__import {
+  width: var(--ui-control);
+  height: var(--ui-control);
+  padding: 5px;
+  border-radius: var(--ui-radius);
+}
+
+.agent-panel__messages {
+  padding: 12px var(--ui-inset);
+}
+
+.agent-panel__message > span,
+.agent-panel__thinking,
+.agent-steps summary {
+  font-size: var(--ui-text-sm);
+}
+
+.agent-context-used,
+.agent-panel__model select,
+.agent-threads__new,
+.agent-threads__chip {
+  font-size: var(--ui-text-xs);
+}
+
+.agent-context-used > span:not(:first-child),
+.agent-panel__model select,
+.agent-panel__badge {
+  border-radius: var(--ui-radius-sm);
+}
+
+.agent-welcome {
+  margin: 0 auto;
+  max-width: 420px;
+}
+
+.agent-suggestions {
+  display: grid;
+  gap: var(--ui-gap);
+  margin-top: 0;
+}
+
+.agent-suggestions button {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px var(--ui-inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--ui-radius);
+  text-align: left;
+  font-size: var(--ui-text-sm);
+}
+
+.agent-panel__error {
+  margin: var(--ui-gap) var(--ui-inset);
+  border-radius: var(--ui-radius);
+}
+
+.agent-panel__composer {
+  margin: var(--ui-inset);
+  padding: var(--ui-inset);
+  border: 0;
+  border-radius: var(--ui-radius-lg);
+  background: var(--sheet);
+  box-shadow: 0 3px 14px #00000012, 0 0 0 1px #00000008;
+}
+
+.agent-panel__composer textarea {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: var(--ui-text)/1.6 var(--font-ui);
+}
+
+.agent-panel__actions {
+  margin-top: 8px;
+  gap: var(--ui-gap);
+}
+
+.agent-panel__composer button[type="submit"],
+.agent-panel__stop {
+  height: var(--ui-control);
+  padding: 0 12px;
+  border-radius: var(--ui-radius);
+  font-size: var(--ui-text);
+}
+
+/* ---- the status line -------------------------------------------------- */
+
+.app__status {
+  box-sizing: border-box;
+  height: var(--status-height);
+  padding: 0 var(--ui-inset);
+  gap: var(--ui-gap);
+  background: var(--surface);
+  font-size: var(--ui-text-xs);
+}
+
+.app__mode,
+.app__flag {
+  padding: 1px 6px;
+  border-radius: var(--ui-radius-sm);
+}
+
+/* ---- narrow windows --------------------------------------------------- */
+
+@media (max-width: 720px) {
+  .workspace-badge,
+  .workspace-divider,
+  .workspace-bar__actions > button:first-child,
+  .workspace-bar kbd,
+  .flow-toolbar__meta {
+    display: none;
+  }
+
+  .workspace-bar {
+    padding: 0 8px;
+    gap: var(--ui-gap);
+  }
+
+  .workspace-bar__identity,
+  .workspace-bar__actions {
+    gap: 4px;
+  }
+
+  .workspace-title {
+    max-width: 100px;
+  }
+
+  .flow-toolbar {
+    padding: 0 8px;
+  }
+}
